@@ -48,11 +48,11 @@ import {
 	scale3,
 } from "./rotation.js";
 import {
-	colourAircraft,
+	colourModel,
 	disposeTree,
 	fitCamera,
 	letterColour,
-	makeAircraft,
+	makeModel,
 	makeArrow,
 	makeDot,
 	makeLabel,
@@ -68,6 +68,7 @@ import {
 
 let {
 	q,
+	model = "aircraft",
 	cols = null,
 	engine,
 	reducedMotion = false,
@@ -155,7 +156,7 @@ onMount(() => {
 	};
 
 	/* ---- the aircraft and its own axes ---- */
-	const aircraft = makeAircraft();
+	const aircraft = makeModel(model);
 	aircraft.userData.pick = { kind: "object" };
 	scene.add(aircraft);
 	const localArrows = {};
@@ -204,7 +205,7 @@ onMount(() => {
 
 	/* ---- ghosts, trails ---- */
 	const ghostPool = [0, 1].map(() => {
-		const plane = makeAircraft({ ghost: true });
+		const plane = makeModel(model, { ghost: true });
 		const label = makeLabel("quiet");
 		label.position.set(0, 0.45, 0);
 		plane.add(label);
@@ -281,8 +282,8 @@ onMount(() => {
 		grid = new GridHelper(9, 9, colours.grid, colours.grid);
 		grid.position.y = -2.5;
 		scene.add(grid);
-		colourAircraft(aircraft, colours);
-		for (const gh of ghostPool) colourAircraft(gh.plane, colours, true);
+		colourModel(aircraft, colours);
+		for (const gh of ghostPool) colourModel(gh.plane, colours, true);
 		trailPool.good.lines.material.color.set(colours.good);
 		trailPool.bad.lines.material.color.set(colours.bad);
 		for (const m of [axisPlus.userData.material, arcHead.userData.material]) m.color.set(colours.muted);

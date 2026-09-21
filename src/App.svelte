@@ -16,6 +16,7 @@
  */
 import "@fortawesome/fontawesome-free/css/fontawesome.min.css";
 import "@fortawesome/fontawesome-free/css/solid.min.css";
+import "@fortawesome/fontawesome-free/css/brands.min.css";
 import { onMount } from "svelte";
 import { version } from "../package.json";
 import CodePanel from "./lib/CodePanel.svelte";
@@ -36,6 +37,19 @@ const TARGET = [2, 1, -3];
 const TIMED = { gimbal: 9, longway: 4, apply: 4, slerp: 3, fullpath: 4, overhead: 6 };
 /** Where both 3D cameras start, and share while the views are aligned. */
 const START_VIEW = R.normalize3([6.3, 3.8, 5.6]);
+/** Verified with `git ls-remote` on 2026-09-21 before being written here. */
+const REPOSITORY = "https://github.com/Arziel1992/rotation-systems";
+/**
+ * The easter egg: one page load in a hundred, the aircraft is a capybara.
+ * Chosen once per load, so it stays for the visit. `?model=capybara` (or
+ * `?model=aircraft`) forces it, for testing and for anyone who asks.
+ */
+const CAPYBARA_CHANCE = 0.01;
+const model = (() => {
+	const forced = new URLSearchParams(location.search).get("model");
+	if (forced === "capybara" || forced === "aircraft") return forced;
+	return Math.random() < CAPYBARA_CHANCE ? "capybara" : "aircraft";
+})();
 const reducedMotion =
 	typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -609,7 +623,7 @@ const hyperPaths = $derived.by(() => {
 
 const pose = $derived(R.toEuler(q));
 const viewName = $derived(
-	t("viewLabel", {
+	t(`viewLabel.${model}`, {
 		yaw: Math.round(pose.yaw),
 		pitch: Math.round(pose.pitch),
 		roll: Math.round(pose.roll),
@@ -739,6 +753,8 @@ onMount(() => {
 	frame = requestAnimationFrame(tick);
 	window.addEventListener("keydown", onGlobalKey);
 
+	if (model === "capybara") announce(t("capybaraFound"));
+
 	if (new URLSearchParams(location.search).has("selftest")) {
 		import("./lib/rotation.selftest.js").then((m) => m.report());
 	}
@@ -755,7 +771,11 @@ onMount(() => {
 	<div class="app-footer">
 		{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
 		<br />
-		<span class="badge" title={t("versionTitle")}>v{version}</span>
+		<a href={REPOSITORY} rel="noopener">
+			<i class="fa-brands fa-github" aria-hidden="true"></i>
+			{t("repository")}
+		</a>
+		<a class="badge" href="{REPOSITORY}/blob/main/CHANGELOG.md" rel="noopener" title={t("versionTitle")}>v{version}</a>
 	</div>
 {/snippet}
 
@@ -796,9 +816,10 @@ onMount(() => {
 		<div class="stage">
 			<div class="views" class:split={method === "quat"}>
 				<div class="view">
-					{#if method === "quat"}<h2 class="view-title">{t("objectTitle")}</h2>{/if}
+					{#if method === "quat"}<h2 class="view-title">{t(`objectTitle.${model}`)}</h2>{/if}
 					<Viewport
 						{q}
+						{model}
 						cols={viewCols}
 						{engine}
 						{reducedMotion}

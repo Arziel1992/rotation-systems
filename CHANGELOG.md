@@ -3,6 +3,27 @@
 Reverse-chronological, newest first. Each heading is the release instant; the version in
 `package.json` is the same instant written `YYYY.M.D-HHMM`.
 
+## 2026-09-21 - 23:37
+
+Deployed, with a less missile-like aircraft and a capybara.
+
+### Added
+
+- **Repository link and changelog badge in the footer**, now that the repository exists
+  (<https://github.com/Arziel1992/rotation-systems>, confirmed with `git ls-remote`). The README
+  links the live site.
+- **A capybara easter egg.** One load in a hundred swaps the aircraft for a capybara head: nose
+  forward, an orange on top marking up. The 3D view's accessible name and the object title follow
+  it, and a screen reader hears the swap announced. `?model=capybara` or `?model=aircraft` forces
+  either.
+
+### Changed
+
+- **The aircraft looked like a missile**: a long cylinder with small fins. It is now a light
+  propeller aircraft with a tapered fuselage, a spinner and a two-blade propeller, a canopy,
+  straight wings with dihedral, a tailplane and a swept fin. Nose, body and fin keep their three
+  colour roles, so the pose still reads without the axes.
+
 ## 2026-09-21 - 23:22
 
 Fixes from the maintainer's testing.

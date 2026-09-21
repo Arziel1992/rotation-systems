@@ -19,6 +19,7 @@ import {
 	TorusGeometry,
 	Vector3,
 } from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -63,60 +64,155 @@ function readTokens(get) {
 		bad: get("bad"),
 		muted: get("text-secondary"),
 		lattice: get("control-border"),
+		capy: get("capy"),
+		capySnout: get("capy-snout"),
+		capyEye: get("capy-eye"),
 	};
 }
 
 /** Colour name for a signed axis letter such as "−Z". */
 export const letterColour = (letter) => letter.slice(-1).toLowerCase();
 
-/**
- * A small aircraft: the shape says which way is forward (the nose cone), which
- * way is up (the tail fin) and which way is across (the wings), so an
- * orientation can be read without any labels at all. Nose along -Z.
- */
-export function makeAircraft({ ghost = false } = {}) {
-	const make = () =>
-		ghost
-			? new MeshBasicMaterial({
-					wireframe: true,
-					transparent: true,
-					opacity: 0.45,
-				})
-			: new MeshStandardMaterial({
-					flatShading: true,
-					roughness: 0.55,
-					metalness: 0.05,
-				});
-	const body = make();
-	const nose = make();
-	const fin = make();
+const material = (ghost) =>
+	ghost
+		? new MeshBasicMaterial({
+				wireframe: true,
+				transparent: true,
+				opacity: 0.45,
+			})
+		: new MeshStandardMaterial({
+				flatShading: true,
+				roughness: 0.55,
+				metalness: 0.05,
+			});
 
+const part = (
+	geometry,
+	mat,
+	[x, y, z] = [0, 0, 0],
+	[rx, ry, rz] = [0, 0, 0],
+) => {
+	const mesh = new Mesh(geometry, mat);
+	mesh.position.set(x, y, z);
+	mesh.rotation.set(rx, ry, rz);
+	return mesh;
+};
+
+/**
+ * A small propeller plane. The shape says which way is forward (the
+ * propeller), which way is up (the canopy and the fin) and which way is across
+ * (the wings), so an orientation can be read without labels. It replaced a
+ * fuselage with an orange cone for a nose, which read as a missile. Nose -Z.
+ */
+function makeAircraft(ghost) {
+	const body = material(ghost);
+	const nose = material(ghost);
+	const fin = material(ghost);
+	const half = Math.PI / 2;
 	const group = new Group();
-	const fuselage = new Mesh(new CylinderGeometry(0.13, 0.08, 1.3, 12), body);
-	fuselage.rotation.x = -Math.PI / 2;
-	const cone = new Mesh(new ConeGeometry(0.13, 0.42, 12), nose);
-	cone.rotation.x = -Math.PI / 2;
-	cone.position.z = -0.86;
-	const wings = new Mesh(new BoxGeometry(1.8, 0.04, 0.38), body);
-	wings.position.z = -0.05;
-	const tailplane = new Mesh(new BoxGeometry(0.66, 0.03, 0.2), body);
-	tailplane.position.z = 0.55;
-	const tailFin = new Mesh(new BoxGeometry(0.03, 0.36, 0.26), fin);
-	tailFin.position.set(0, 0.19, 0.55);
-	group.add(fuselage, cone, wings, tailplane, tailFin);
-	group.userData.materials = { body, nose, fin };
+	group.add(
+		// fuselage: thick at the cabin, tapering to the tail
+		part(
+			new CylinderGeometry(0.16, 0.06, 1.45, 14),
+			body,
+			[0, 0, 0.08],
+			[-half, 0, 0],
+		),
+		part(new SphereGeometry(0.16, 16, 12), body, [0, 0, -0.64]),
+		// spinner and a two-blade propeller: the thing a missile never has
+		part(new ConeGeometry(0.07, 0.18, 14), nose, [0, 0, -0.86], [-half, 0, 0]),
+		part(new BoxGeometry(0.05, 0.66, 0.02), nose, [0, 0, -0.81], [0, 0, 0.5]),
+	);
+	// canopy: a half dome stretched along the fuselage, tinted like the fin
+	const canopy = part(
+		new SphereGeometry(0.12, 16, 10, 0, 2 * Math.PI, 0, half),
+		fin,
+		[0, 0.08, -0.3],
+	);
+	canopy.scale.set(1, 1.1, 2.2);
+	group.add(
+		canopy,
+		// wings with a little dihedral, broad enough to read as wings
+		part(
+			new BoxGeometry(0.98, 0.035, 0.46),
+			body,
+			[0.52, -0.02, -0.2],
+			[0, 0, 0.07],
+		),
+		part(
+			new BoxGeometry(0.98, 0.035, 0.46),
+			body,
+			[-0.52, -0.02, -0.2],
+			[0, 0, -0.07],
+		),
+		// tailplane and a swept fin
+		part(new BoxGeometry(0.72, 0.03, 0.22), body, [0, 0.02, 0.72]),
+		part(new BoxGeometry(0.03, 0.34, 0.26), fin, [0, 0.19, 0.74], [0.35, 0, 0]),
+	);
+	group.userData = { kind: "aircraft", materials: { body, nose, fin } };
 	return group;
 }
 
-export function colourAircraft(aircraft, c, ghost = false) {
-	const { body, nose, fin } = aircraft.userData.materials;
+/**
+ * The easter egg: a capybara's head. Blocky skull, big blunt muzzle, small
+ * ears, eyes high on the sides, and an orange balanced on top - the internet's
+ * favourite capybara pose, and it marks "up" the way the plane's fin does.
+ * Nose along -Z, like the plane, so every arrow and label still means the same.
+ */
+function makeCapybara(ghost) {
+	const fur = material(ghost);
+	const muzzle = material(ghost);
+	const dark = material(ghost);
+	const orange = material(ghost);
+	const group = new Group();
+	const eye = new SphereGeometry(0.055, 12, 10);
+	const ear = new SphereGeometry(0.11, 12, 10);
+	const earLeft = part(ear, muzzle, [-0.27, 0.36, 0.34]);
+	const earRight = part(ear, muzzle, [0.27, 0.36, 0.34]);
+	for (const e of [earLeft, earRight]) e.scale.set(1, 1, 0.55);
+	group.add(
+		part(new RoundedBoxGeometry(0.74, 0.64, 1.0, 4, 0.2), fur, [0, 0, 0.05]),
+		part(
+			new RoundedBoxGeometry(0.64, 0.5, 0.46, 4, 0.17),
+			muzzle,
+			[0, -0.07, -0.6],
+		),
+		part(eye, dark, [-0.37, 0.14, -0.14]),
+		part(eye, dark, [0.37, 0.14, -0.14]),
+		part(new SphereGeometry(0.04, 10, 8), dark, [-0.12, 0.03, -0.83]),
+		part(new SphereGeometry(0.04, 10, 8), dark, [0.12, 0.03, -0.83]),
+		earLeft,
+		earRight,
+		part(new SphereGeometry(0.15, 16, 12), orange, [0, 0.46, 0.02]),
+	);
+	group.userData = {
+		kind: "capybara",
+		materials: { fur, muzzle, dark, orange },
+	};
+	return group;
+}
+
+/** The object the learner turns: "aircraft", or rarely "capybara". */
+export function makeModel(kind = "aircraft", { ghost = false } = {}) {
+	return kind === "capybara" ? makeCapybara(ghost) : makeAircraft(ghost);
+}
+
+export function colourModel(model, c, ghost = false) {
+	const { kind, materials } = model.userData;
 	if (ghost) {
-		for (const m of [body, nose, fin]) m.color.set(c.ghost);
+		for (const m of Object.values(materials)) m.color.set(c.ghost);
 		return;
 	}
-	body.color.set(c.object);
-	nose.color.set(c.nose);
-	fin.color.set(c.fin);
+	if (kind === "capybara") {
+		materials.fur.color.set(c.capy);
+		materials.muzzle.color.set(c.capySnout);
+		materials.dark.color.set(c.capyEye);
+		materials.orange.color.set(c.nose);
+		return;
+	}
+	materials.body.color.set(c.object);
+	materials.nose.color.set(c.nose);
+	materials.fin.color.set(c.fin);
 }
 
 /** An arrow from the origin: a cylinder and a cone, thick enough to see. */

@@ -48,9 +48,15 @@ export default {
 		"Arrastra el objetivo · flechas y Re Pág/Av Pág lo mueven · 1–4 método · G glosario",
 
 	/* Vistas */
-	viewLabel:
+	"viewLabel.aircraft":
 		"Vista 3D del avión: guiñada {yaw}°, cabeceo {pitch}°, alabeo {roll}°",
-	objectTitle: "El avión",
+	"viewLabel.capybara":
+		"Vista 3D de una cabeza de capibara: guiñada {yaw}°, cabeceo {pitch}°, alabeo {roll}°",
+	"objectTitle.aircraft": "El avión",
+	"objectTitle.capybara": "La capibara",
+	capybaraFound:
+		"Una capibara ocupa el lugar del avión en esta visita. Su nariz apunta hacia adelante y la naranja sobre su cabeza apunta hacia arriba; todo lo demás funciona igual.",
+	repository: "Repositorio",
 	hyperTitle: "q en la hiperesfera (4D)",
 	hyperLabel:
 		"Proyección estereográfica del cuaternión unitario q, en las direcciones de la escena: sin giro en el centro, todo giro de 180° sobre la esfera unitaria",

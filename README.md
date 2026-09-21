@@ -8,6 +8,9 @@ showing how it fails when nothing guards its limits, such as gimbal lock, and th
 It teaches the concept, not one unit's module: it was built for the 3D rotation content in
 COS30031 Games Programming (module 06), and serves any unit that teaches game transforms.
 
+**Live:** <https://arziel1992.github.io/rotation-systems/> ·
+**Repository:** <https://github.com/Arziel1992/rotation-systems>
+
 ## Key Features
 
 - **Four methods, one orientation.** Euler angles with a gimbal rig; axis-and-angle quaternions;
@@ -77,11 +80,12 @@ self-check proves this against the true rotation about each ring's axis.
 
 ### Parameters
 
-No command-line arguments. One URL parameter:
+No command-line arguments. Two URL parameters:
 
 | Parameter | Effect |
 | --- | --- |
 | `?selftest` | Runs the self-check in the browser and prints a table to the console. |
+| `?model=aircraft` or `?model=capybara` | Forces the model. Without it, one load in a hundred swaps the aircraft for a capybara head (nose forward, an orange on top for up) and says so to screen readers. |
 
 ### Controls
 

@@ -50,9 +50,15 @@ export default {
 		"Drag the target · arrows and Page Up/Down move it · 1–4 method · G glossary",
 
 	/* Views */
-	viewLabel:
+	"viewLabel.aircraft":
 		"3D view of the aircraft: yaw {yaw}°, pitch {pitch}°, roll {roll}°",
-	objectTitle: "The aircraft",
+	"viewLabel.capybara":
+		"3D view of a capybara head: yaw {yaw}°, pitch {pitch}°, roll {roll}°",
+	"objectTitle.aircraft": "The aircraft",
+	"objectTitle.capybara": "The capybara",
+	capybaraFound:
+		"A capybara has taken the aircraft's place for this visit. Its nose points forward and the orange on its head points up; everything else works the same.",
+	repository: "Repository",
 	hyperTitle: "q on the hypersphere (4D)",
 	hyperLabel:
 		"Stereographic projection of the unit quaternion q, in the scene's directions: no turn at the centre, every 180° turn on the unit sphere",
