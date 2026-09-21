@@ -73,10 +73,10 @@
 	--grid: #cbd5e1;
 	--target: #7b2fa8;
 	--ghost: #3e4b63;
-	/* The easter-egg capybara: fur, muzzle, eyes. */
-	--capy: #8a5a33;
-	--capy-snout: #6b4426;
-	--capy-eye: #1c1410;
+	/* How strongly the capybara's texture is added again as a glow (a number,
+	   read by three.js). Measured on screen, not in the contrast table,
+	   because the fur is a texture, not one colour: light 6.0:1, dark >= 3:1. */
+	--capy-glow: 0.43;
 
 	--sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 	--mono:
@@ -132,9 +132,7 @@
 	--grid: #26324a;
 	--target: #d69bff;
 	--ghost: #c9d4ea;
-	--capy: #b98252;
-	--capy-snout: #93643d;
-	--capy-eye: #120c09;
+	--capy-glow: 1.5;
 }
 
 /* ================================================================ base */
@@ -464,7 +462,9 @@ h1 {
 	border-left: 2px solid var(--accent);
 	padding: 0.7rem 0.8rem;
 	background: var(--blue-tint);
-	border-radius: 0 6px 6px 0;
+	/* Rounded all round, like the rule cards beside them; the template's
+	   square left corners made these read as a different kind of card. */
+	border-radius: 10px;
 }
 
 .game-cases h4 {

@@ -51,12 +51,13 @@ export default {
 	"viewLabel.aircraft":
 		"Vista 3D del avión: guiñada {yaw}°, cabeceo {pitch}°, alabeo {roll}°",
 	"viewLabel.capybara":
-		"Vista 3D de una cabeza de capibara: guiñada {yaw}°, cabeceo {pitch}°, alabeo {roll}°",
+		"Vista 3D de una capibara: guiñada {yaw}°, cabeceo {pitch}°, alabeo {roll}°",
 	"objectTitle.aircraft": "El avión",
 	"objectTitle.capybara": "La capibara",
 	capybaraFound:
 		"Una capibara ocupa el lugar del avión en esta visita. Su nariz apunta hacia adelante y la naranja sobre su cabeza apunta hacia arriba; todo lo demás funciona igual.",
 	repository: "Repositorio",
+	modelCredit: "Modelo 3D",
 	hyperTitle: "q en la hiperesfera (4D)",
 	hyperLabel:
 		"Proyección estereográfica del cuaternión unitario q, en las direcciones de la escena: sin giro en el centro, todo giro de 180° sobre la esfera unitaria",
@@ -97,6 +98,10 @@ export default {
 
 	/* Panel de código */
 	codeHeading: "La misma pose en código",
+	hideCode: "Ocultar código",
+	showCode: "Mostrar código",
+	resizeCode: "Cambiar el tamaño del panel de código",
+	codeSizeValue: "{n} % de la altura de la ventana",
 	enginesLabel: "Motor",
 	"engine.godot": "Godot · GDScript",
 	"engine.unity": "Unity · C#",
@@ -116,7 +121,7 @@ export default {
 	"scrub.tg": "Componente del objetivo {n}",
 	"scrub.rate": "Velocidad de giro",
 	"scrub.t": "Fracción t",
-	"scrub.turn": "Ángulo del giro",
+	"scrub.tu": "Número del giro {n}",
 
 	/* Controles */
 	glossaryFor: "Glosario: {topic}",
@@ -155,7 +160,8 @@ export default {
 	turnYawRight: "Girar a la derecha",
 	turnRollLeft: "Alabear a la izquierda",
 	turnRollRight: "Alabear a la derecha",
-	turnsHint: "Cada clic suma un giro de 15°. El código muestra el último.",
+	turnsHint:
+		"Cada clic suma un giro de 15°. El código muestra el último giro como tres ángulos; arrastra cualquiera para cambiarlo.",
 	showGizmo: "Mostrar el gizmo de rotación",
 	showGizmoHint:
 		"Arrastra un anillo para girar alrededor de ese eje, en el espacio elegido arriba.",
@@ -409,9 +415,9 @@ export default {
 	"engineNote.quat.unreal":
 		"FQuat(Axis, AngleRad) recibe radianes. Slerp corrige primero la alineación; SlerpFullPath no. == compara las componentes de forma exacta, y | es el producto punto.",
 	"engineNote.basis.godot":
-		"transform.basis.x, .y y .z son los ejes del nodo; adelante es −basis.z. rotate_object_local y global_rotate lo giran, y orthonormalized() corrige la deriva.",
+		"transform.basis.x, .y y .z son los ejes del nodo; adelante es −basis.z. rotate_object_local y global_rotate lo giran alrededor de un eje; multiplicar por Basis.from_euler lo gira con los tres a la vez, a la derecha para sus propios ejes y a la izquierda para los del mundo. orthonormalized() corrige la deriva.",
 	"engineNote.basis.unity":
-		"transform.right, up y forward son los ejes del objeto. Rotate(axis, degrees, Space.Self o Space.World) lo gira, y Matrix4x4.Rotate da la matriz.",
+		"transform.right, up y forward son los ejes del objeto. Rotate(x, y, z, Space.Self o Space.World) lo gira, con los tres ángulos escritos como en Quaternion.Euler, y Matrix4x4.Rotate da la matriz.",
 	"engineNote.basis.unreal":
 		"GetActorForwardVector, GetActorRightVector y GetActorUpVector son la X, la Y y la Z del Actor. AddActorLocalRotation y AddActorWorldRotation lo giran.",
 	"engineNote.lookat.godot":

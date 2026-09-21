@@ -11,15 +11,14 @@
  *
  * Ids, as code.js prints them:
  *   e0 e1 e2     the three typed Euler numbers
- *   ax0 ax1 ax2  the axis components     ang   the angle
- *   tg0 tg1 tg2  the look-at target       rate  the turn rate
- *   t            the scenario fraction    turn  the basis tab's last turn
+ *   ax0 ax1 ax2  the axis components, raw  ang   the angle
+ *   tg0 tg1 tg2  the look-at target        rate  the turn rate
+ *   t            the scenario fraction
+ *   tu0 tu1 tu2  the basis tab's last turn, typed as three Euler numbers
  */
 
-import { TURN } from "./code.js";
 import {
 	displayVec,
-	engineAxisAngle,
 	engineEuler,
 	engineVec,
 	normalize3,
@@ -59,13 +58,12 @@ export function scrub(state, id, delta) {
 		return { euler: semanticFromEngine(engine, typed) };
 	}
 	if (/^ax[0-2]$/.test(id)) {
-		const { axis } = engineAxisAngle(
-			engine,
-			axisOf(state.axisRaw),
-			state.angle,
-		);
-		axis[index] += delta;
-		const d = displayVec(engine, axis);
+		// The RAW vector, as printed before .normalized(), so one component
+		// moves and the other two stay put.
+		const [r, u, fwd] = state.axisRaw;
+		const printed = engineVec(engine, [r, u, -fwd]);
+		printed[index] += delta;
+		const d = displayVec(engine, printed);
 		return { axisRaw: [d[0], d[1], -d[2]].map((c) => clamp(c, -1, 1)) };
 	}
 	if (id === "ang") {
@@ -85,10 +83,10 @@ export function scrub(state, id, delta) {
 	}
 	if (id === "rate") return { turnRate: clamp(state.turnRate + delta, 1, 12) };
 	if (id === "t") return { progress: clamp(state.progress + delta, 0, 1) };
-	if (id === "turn") {
-		// Printed as sign × degrees (Unity's pitch-up is Rotate(right, -15)).
-		const sign = engine === "unreal" ? 1 : TURN[engine][state.lastTurn.kind][1];
-		return { turnDeg: state.lastTurn.deg + sign * delta };
+	if (/^tu[0-2]$/.test(id)) {
+		const typed = engineEuler(engine, state.lastTurn);
+		typed[index] += delta;
+		return { turn: semanticFromEngine(engine, typed) };
 	}
 	return null;
 }

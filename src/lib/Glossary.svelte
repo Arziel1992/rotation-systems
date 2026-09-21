@@ -52,10 +52,27 @@ function closed() {
 	opener?.focus?.();
 }
 
+/**
+ * A click on the dimmed page behind closes it. The backdrop belongs to the
+ * dialog, so such a click targets the dialog itself; the dialog has no
+ * padding, so a click on its content never does. The box test is a second
+ * guard, for a gap between children. Keyboard users have Esc and Close.
+ */
+function onBackdrop(event) {
+	if (event.target !== dialog) return;
+	const box = dialog.getBoundingClientRect();
+	const inside =
+		event.clientX >= box.left &&
+		event.clientX <= box.right &&
+		event.clientY >= box.top &&
+		event.clientY <= box.bottom;
+	if (!inside) dialog.close();
+}
+
 const paragraphs = (key) => t(key).split("\n");
 </script>
 
-<dialog bind:this={dialog} class="modal-content" aria-labelledby="glossary-title" onclose={closed}>
+<dialog bind:this={dialog} class="modal-content" aria-labelledby="glossary-title" onclose={closed} onclick={onBackdrop}>
 	<div class="layout">
 		<nav class="toc" aria-labelledby="glossary-title">
 			<h2 id="glossary-title">{t("glossaryTitle")}</h2>

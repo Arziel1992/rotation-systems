@@ -76,6 +76,14 @@ let engine = $state(saved("engine", R.ENGINES, "unity"));
 let leftOpen = $state(document.documentElement.dataset.theory !== "hidden");
 let rightOpen = $state(document.documentElement.dataset.controls !== "hidden");
 let dark = $state(document.documentElement.dataset.theme === "dark");
+/* The code panel: open, or folded to its header; and its height in percent of
+   the window, never more than a third. Saved as a whole percent, so the saved
+   value is checked against a list like every other setting. */
+const CODE_MIN = 15;
+const CODE_MAX = 33;
+const CODE_SIZES = Array.from({ length: CODE_MAX - CODE_MIN + 1 }, (_, i) => String(CODE_MIN + i));
+let codeOpen = $state(saved("code", ["shown", "hidden"], "shown") === "shown");
+let codeSize = $state(Number(saved("codeSize", CODE_SIZES, String(CODE_MAX))));
 let glossaryOpen = $state(false);
 let glossarySection = $state("manual");
 
@@ -98,9 +106,12 @@ let qLength = $state(1.3);
 let aligned = $state(saved("aligned", ["on", "off"], "on") === "on");
 let viewDir = $state([...START_VIEW]);
 
-/* Basis */
+/* Basis. The last turn is one delta, three Euler numbers; a button or a
+   gizmo drag starts a new one about a single axis. */
+const NO_TURN = { yaw: 0, pitch: 0, roll: 0 };
+const FIRST_TURN = { ...NO_TURN, yaw: 15, space: "local" };
 let space = $state("local");
-let lastTurn = $state({ kind: "yaw", deg: 15, space: "local" });
+let lastTurn = $state({ ...FIRST_TURN });
 let cols = $state(null);
 let driftRunning = $state(false);
 let orthonormalize = $state(false);
@@ -180,18 +191,16 @@ const turnStep = (kind, deg) => R.fromEuler({ yaw: 0, pitch: 0, roll: 0, [kind]:
 
 function turn(kind, deg) {
 	stopScenario();
-	lastTurn = { kind, deg, space };
+	lastTurn = { ...NO_TURN, [kind]: deg, space };
 	setOrientation(space === "local" ? R.mul(q, turnStep(kind, deg)) : R.mul(turnStep(kind, deg), q));
 }
 
-/** Change the size of the last basis turn: undo the old step, apply the new. */
-function retune(nextDeg) {
-	const { kind, deg, space: where } = lastTurn;
-	const undo = R.conj(turnStep(kind, deg));
-	const redo = turnStep(kind, nextDeg);
-	const next = where === "local" ? R.mul(R.mul(q, undo), redo) : R.mul(R.mul(redo, undo), q);
-	lastTurn = { kind, deg: nextDeg, space: where };
-	setOrientation(next);
+/** Reshape the last basis turn: undo the old delta, apply the new. */
+function retune(next) {
+	const where = lastTurn.space;
+	const turned = R.retuneTurn(q, lastTurn, next, where === "local");
+	lastTurn = { ...next, space: where };
+	setOrientation(turned);
 }
 
 /* ------------------------------------------------------ direct manipulation */
@@ -217,7 +226,7 @@ function onGizmo(axisName, deg, phase) {
 	if (!dragTurn) return;
 	const step = R.ringToAngle(kind, deg);
 	dragTurn.deg += step;
-	lastTurn = { kind, deg: dragTurn.deg, space };
+	lastTurn = { ...NO_TURN, [kind]: dragTurn.deg, space };
 	setOrientation(space === "local" ? R.mul(q, turnStep(kind, step)) : R.mul(turnStep(kind, step), q));
 }
 
@@ -244,7 +253,7 @@ function onScrub(id, delta) {
 	if (patch.target) setTarget(patch.target);
 	if (patch.turnRate !== undefined) turnRate = patch.turnRate;
 	if (patch.progress !== undefined) seek(patch.progress);
-	if (patch.turnDeg !== undefined) retune(patch.turnDeg);
+	if (patch.turn) retune(patch.turn);
 }
 
 function onView(dir) {
@@ -418,7 +427,7 @@ function reset() {
 		viewDir = [...START_VIEW];
 	} else if (method === "basis") {
 		space = "local";
-		lastTurn = { kind: "yaw", deg: 15, space: "local" };
+		lastTurn = { ...FIRST_TURN };
 		q = R.fromEuler(POSE);
 	} else {
 		smooth = false;
@@ -505,6 +514,50 @@ function toggleRight() {
 	if (rightOpen) delete document.documentElement.dataset.controls;
 	else document.documentElement.dataset.controls = "hidden";
 	persist("controls", rightOpen ? "shown" : "hidden");
+}
+
+function toggleCode() {
+	codeOpen = !codeOpen;
+	persist("code", codeOpen ? "shown" : "hidden");
+}
+
+function setCodeSize(next, save = true) {
+	codeSize = Math.min(CODE_MAX, Math.max(CODE_MIN, next));
+	if (save) persist("codeSize", String(Math.round(codeSize)));
+}
+
+/** The splitter above the code: drag it up or down. */
+function startCodeResize(event) {
+	if (event.button !== 0) return;
+	event.preventDefault();
+	event.currentTarget.focus();
+	const startY = event.clientY;
+	const start = codeSize;
+	const move = (e) => setCodeSize(start + ((startY - e.clientY) / window.innerHeight) * 100, false);
+	const up = () => {
+		setCodeSize(codeSize);
+		window.removeEventListener("pointermove", move);
+		window.removeEventListener("pointerup", up);
+		window.removeEventListener("pointercancel", up);
+	};
+	window.addEventListener("pointermove", move);
+	window.addEventListener("pointerup", up);
+	window.addEventListener("pointercancel", up);
+}
+
+/** Or focus it: arrows move it 2%, Page keys 5%, Home and End jump. */
+function onCodeResizeKey(event) {
+	const moves = {
+		ArrowUp: 2,
+		ArrowDown: -2,
+		PageUp: 5,
+		PageDown: -5,
+		Home: CODE_MIN - codeSize,
+		End: CODE_MAX - codeSize,
+	};
+	if (!(event.key in moves)) return;
+	event.preventDefault();
+	setCodeSize(Math.round(codeSize + moves[event.key]));
 }
 
 function toggleAligned() {
@@ -638,7 +691,7 @@ const codeState = $derived({
 	// While q is being applied, the code builds the full q and then slerps
 	// from the identity; the fraction applied so far is `t`.
 	q: active === "apply" ? (base?.q ?? q) : qShown,
-	axis,
+	axisRaw,
 	angle,
 	slerpA,
 	slerpB,
@@ -817,6 +870,15 @@ onMount(() => {
 			<div class="views" class:split={method === "quat"}>
 				<div class="view">
 					{#if method === "quat"}<h2 class="view-title">{t(`objectTitle.${model}`)}</h2>{/if}
+					{#if model === "capybara"}
+						<!-- CC BY 3.0 asks for title, author, source and licence. -->
+						<p class="model-credit">
+							{t("modelCredit")}:
+							<a href="https://poly.pizza/m/66d-mKAgF17" rel="noopener">Capybara</a>
+							· Poly by Google ·
+							<a href="https://creativecommons.org/licenses/by/3.0/" rel="noopener license">CC BY 3.0</a>
+						</p>
+					{/if}
 					<Viewport
 						{q}
 						{model}
@@ -893,10 +955,33 @@ onMount(() => {
 					{t(`kbHint.${method}`)}
 				</p>
 			</div>
-			<div class="code">
+			<div class="code" class:closed={!codeOpen} style:--code-size="{codeSize}vh">
+				{#if codeOpen}
+					<!-- WAI-ARIA window splitter: a FOCUSABLE separator is a widget,
+					     with a value, arrow keys and Home/End (ARIA 1.2, "separator").
+					     Svelte's role table files every separator as structural, so
+					     its two warnings below are wrong for this one and silenced. -->
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_no_noninteractive_tabindex -->
+					<div
+						class="code-resizer"
+						role="separator"
+						aria-orientation="horizontal"
+						aria-controls="code-body"
+						aria-label={t("resizeCode")}
+						aria-valuemin={CODE_MIN}
+						aria-valuemax={CODE_MAX}
+						aria-valuenow={Math.round(codeSize)}
+						aria-valuetext={t("codeSizeValue", { n: Math.round(codeSize) })}
+						tabindex="0"
+						onpointerdown={startCodeResize}
+						onkeydown={onCodeResizeKey}
+					></div>
+				{/if}
 				<CodePanel
 					snapshot={codeState}
 					{engine}
+					open={codeOpen}
+					ontoggle={toggleCode}
 					onengine={setEngine}
 					onannounce={announce}
 					onscrub={onScrub}
@@ -960,7 +1045,9 @@ onMount(() => {
 	.stage {
 		height: 100%;
 		display: grid;
-		grid-template-rows: minmax(16rem, 1fr) minmax(13rem, 40%);
+		/* The code row is as tall as the code panel says: --code-size, at
+		   most a third of the window, or just its header when folded. */
+		grid-template-rows: minmax(16rem, 1fr) auto;
 		/* An explicit column. The implicit one is `auto`, and a code line (pre,
 		   no wrapping) then widens the whole stage past its track - the canvas,
 		   being positioned, painted over the controls rail (MISTAKES.md). */
@@ -1032,13 +1119,20 @@ onMount(() => {
 		color: var(--accent-text);
 	}
 
-	/* Under the 4D view's title: in the split layout the toolbar sits at the
-	   bottom, where this hint used to be covered by it. */
+	/* The toolbar keeps its place at the top right in every method, so in the
+	   split layout the 4D view's title sits below it, and its hint at the
+	   bottom, where the toolbar used to go: under the title, a narrow view
+	   wrapped the hint over the sphere's "up" label. The toolbar used to drop
+	   to the bottom instead, and the learner saw it jump. */
+	.views.split .view + .view .view-title {
+		top: 3.1rem;
+	}
+
 	.view-hint {
 		position: absolute;
 		left: 0.6rem;
 		right: 0.6rem;
-		top: 2.8rem;
+		bottom: 0.6rem;
 		margin: 0;
 		font-size: 0.72rem;
 		color: var(--text-secondary);
@@ -1054,11 +1148,6 @@ onMount(() => {
 		display: flex;
 		gap: 0.35rem;
 		align-items: center;
-	}
-
-	.views.split .float-toolbar {
-		top: auto;
-		bottom: 2.4rem;
 	}
 
 	.float-toolbar button,
@@ -1101,8 +1190,62 @@ onMount(() => {
 	}
 
 	.code {
+		position: relative;
 		min-height: 0;
 		min-width: 0;
+		height: var(--code-size);
+	}
+
+	.code.closed {
+		height: auto;
+	}
+
+	/* A 10px grab strip across the panel's top edge, half over the view, with
+	   a grip in the middle that turns accent on hover and focus. */
+	.code-resizer {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: -5px;
+		height: 10px;
+		z-index: 6;
+		cursor: row-resize;
+		touch-action: none;
+	}
+
+	.code-resizer::after {
+		content: "";
+		position: absolute;
+		left: 50%;
+		top: 3px;
+		width: 44px;
+		height: 4px;
+		margin-left: -22px;
+		border-radius: 99px;
+		background: var(--control-border);
+	}
+
+	.code-resizer:hover::after,
+	.code-resizer:focus-visible::after {
+		background: var(--accent);
+	}
+
+	.model-credit {
+		position: absolute;
+		top: 0.6rem;
+		left: 2.4rem;
+		z-index: 2;
+		margin: 0;
+		font-size: 0.7rem;
+		color: var(--text-secondary);
+		background: var(--glass-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: 99px;
+		padding: 0.15rem 0.6rem;
+	}
+
+	.views.split .model-credit {
+		top: 2.6rem;
 	}
 
 	.app-footer .badge {
@@ -1141,6 +1284,21 @@ onMount(() => {
 		.code {
 			height: 60vh;
 			min-height: 18rem;
+		}
+
+		/* The page scrolls on a phone, so the panel keeps its size; it can
+		   still fold. And the views stack, so nothing sits above the 4D title. */
+		.code.closed {
+			height: auto;
+			min-height: 0;
+		}
+
+		.code-resizer {
+			display: none;
+		}
+
+		.views.split .view + .view .view-title {
+			top: 0.6rem;
 		}
 
 		.float-toolbar {

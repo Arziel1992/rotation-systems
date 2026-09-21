@@ -198,6 +198,17 @@ export function fromEuler({ yaw, pitch, roll }) {
 }
 
 /**
+ * Change a turn already applied to q from delta `from` to delta `to` (both
+ * semantic Euler), about the object's own axes (`local`) or the world's: undo
+ * the old delta, apply the new one. What dragging the basis tab's code does.
+ */
+export function retuneTurn(q, from, to, local) {
+	const undo = conj(fromEuler(from));
+	const redo = fromEuler(to);
+	return local ? mul(mul(q, undo), redo) : mul(mul(redo, undo), q);
+}
+
+/**
  * Display-frame quaternion back to semantic yaw/pitch/roll, pitch in
  * [-90, 90] - the same branch every engine's read-back uses.
  *

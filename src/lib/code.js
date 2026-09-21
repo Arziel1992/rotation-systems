@@ -27,6 +27,7 @@ import {
 	fromAxisAngle,
 	fromEuler,
 	length4,
+	normalize3,
 	readBack,
 	unitsPerMetre,
 	upHintAngle,
@@ -181,11 +182,17 @@ function quaternion(s) {
 	if (s.scenario === "unnormalised") return unnormalised(s);
 	if (s.scenario === "negate") return negated(s);
 
-	const { axis, angle } = engineAxisAngle(s.engine, s.axis, s.angle);
+	// The axis is printed RAW, as the sliders hold it, and normalised in the
+	// code, as a game would: printed normalised, dragging one component
+	// rescaled all three (MISTAKES.md, 2026-09-22). Sliders are right / up /
+	// forward; the display frame's forward is -Z.
+	const raw = [s.axisRaw[0], s.axisRaw[1], -s.axisRaw[2]];
+	const unit = normalize3(raw) ?? [0, 1, 0];
+	const { axis, angle } = engineAxisAngle(s.engine, raw, s.angle);
 	// Computed from the SAME axis and angle the constructor line prints, never
 	// taken from the caller's q: two sources of truth once printed a q that
 	// contradicted the line above it (MISTAKES.md, 2026-09-21).
-	const q = engineQuat(s.engine, fromAxisAngle(s.axis, s.angle * DEG));
+	const q = engineQuat(s.engine, fromAxisAngle(unit, s.angle * DEG));
 	const half = `w = cos(θ/2) and (x, y, z) = axis · sin(θ/2), with θ = ${num(s.angle)}°`;
 	// "Apply q gradually": the same q, reached a fraction s of the way from
 	// the identity - so the q line above it still describes the whole turn.
@@ -195,7 +202,7 @@ function quaternion(s) {
 		return [
 			"# Godot 4 · right-handed · Quaternion(x, y, z, w)",
 			`# ${half}`,
-			`var axis := Vector3(${gv(axis, 3, "ax")})  # must be normalised`,
+			`var axis := Vector3(${gv(axis, 3, "ax")}).normalized()  # must be unit length`,
 			`var q := Quaternion(axis, deg_to_rad(${g(angle, 1, "ang")}))`,
 			`# q == Quaternion(${gv(q, 3)})`,
 			apply
@@ -208,7 +215,7 @@ function quaternion(s) {
 			"// Unity 6 · left-handed · Quaternion(x, y, z, w)",
 			`// ${half}`,
 			"// Left-handed: the same turn about the same axis is a NEGATIVE angle here.",
-			`Vector3 axis = new Vector3(${fv(axis, 3, "ax")});`,
+			`Vector3 axis = new Vector3(${fv(axis, 3, "ax")}).normalized;`,
 			`Quaternion q = Quaternion.AngleAxis(${f(angle, 1, "ang")}, axis);`,
 			`// q == (${gv(q, 3)})`,
 			apply
@@ -220,7 +227,7 @@ function quaternion(s) {
 		"// Unreal 5 · left-handed · X forward, Y right, Z up · FQuat(X, Y, Z, W)",
 		`// ${half}`,
 		"// Left-handed: the same turn about the same axis is a NEGATIVE angle here.",
-		`const FVector Axis(${fv(axis, 3, "ax")});  // must be normalised`,
+		`const FVector Axis = FVector(${fv(axis, 3, "ax")}).GetSafeNormal();  // must be unit length`,
 		`const FQuat Q(Axis, FMath::DegreesToRadians(${f(angle, 1, "ang")}));`,
 		`// Q == FQuat(${gv(q, 3)})`,
 		apply
@@ -330,26 +337,26 @@ function negated(s) {
 
 /* ------------------------------------------------------------------- basis */
 
-/** Axis and sign for a semantic turn, per engine. Exported for the self-check. */
-export const TURN = {
-	godot: {
-		pitch: ["Vector3.RIGHT", 1],
-		yaw: ["Vector3.UP", -1],
-		roll: ["Vector3.FORWARD", 1],
-	},
-	unity: {
-		pitch: ["Vector3.right", -1],
-		yaw: ["Vector3.up", 1],
-		roll: ["Vector3.forward", -1],
-	},
-};
-
-function turnWords({ kind, deg }) {
-	const pos = { pitch: "pitch up", yaw: "turn right", roll: "bank right" };
-	const negative = { pitch: "pitch down", yaw: "turn left", roll: "bank left" };
-	return `${deg >= 0 ? pos[kind] : negative[kind]} ${num(Math.abs(deg))}°`;
+/** "turn right 15.0°", leaving out the parts that are zero. */
+function turnWords(turn) {
+	const parts = pose(turn)
+		.split(", ")
+		.filter((part) => !part.endsWith(" 0.0°"));
+	return parts.length ? parts.join(", ") : "none";
 }
 
+/*
+ * The last turn is ONE delta rotation, typed as three Euler numbers the way
+ * each engine types them, so all three can be dragged. Multiplied on the
+ * right it turns about the object's own axes; on the left, the world's.
+ * Checked 2026-09-22: Unity's source, Rotate(x, y, z, Self) is
+ * localRotation * Quaternion.Euler(x, y, z) and World reduces to
+ * Euler * rotation; Godot's source, rotate_object_local is basis * B and
+ * global_rotate is B * basis, and from_euler defaults to YXZ like
+ * rotation_degrees; Unreal's documentation, AddActorLocalRotation adds the
+ * delta "in its local reference frame" and AddActorWorldRotation "in world
+ * space". Composition is each engine's Euler order - the Euler tab's.
+ */
 function basis(s) {
 	if (s.scenario === "drift") return drift(s);
 	if (s.scenario === "worldconst") return worldConstant(s);
@@ -360,11 +367,12 @@ function basis(s) {
 	);
 	const turn = s.lastTurn;
 	const local = turn.space === "local";
-	const where = local ? "its OWN" : "the WORLD's";
-	const axisName = { pitch: "right", yaw: "up", roll: "forward" }[turn.kind];
+	const where = local ? "its OWN axes" : "the WORLD's axes";
+	const [a, b, c] = engineEuler(s.engine, turn);
+	const said = `Last turn: ${turnWords(turn)}, about ${where}`;
 
 	if (s.engine === "godot") {
-		const [axis, sign] = TURN.godot[turn.kind];
+		const delta = "Basis.from_euler(turn * PI / 180.0)";
 		return [
 			"# Godot 4 · right-handed · Y up · forward is -Z",
 			"# The Basis columns ARE the node's own axes:",
@@ -372,12 +380,14 @@ function basis(s) {
 			`var up := transform.basis.y        # ${tuple(up)}`,
 			`var forward := -transform.basis.z  # ${tuple(forward)}  note the minus`,
 			"",
-			`# Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-			`${local ? "rotate_object_local" : "global_rotate"}(${axis}, deg_to_rad(${g(sign * turn.deg, 1, "turn")}))`,
+			`# ${said}`,
+			`var turn := Vector3(${g(a, 1, "tu0")}, ${g(b, 1, "tu1")}, ${g(c, 1, "tu2")})  # degrees: x = pitch, y = -yaw, z = -roll`,
+			local
+				? `transform.basis = transform.basis * ${delta}  # on the right: its own axes`
+				: `transform.basis = ${delta} * transform.basis  # on the left: the world's axes`,
 		];
 	}
 	if (s.engine === "unity") {
-		const [axis, sign] = TURN.unity[turn.kind];
 		return [
 			"// Unity 6 · left-handed · Y up · forward is +Z",
 			"// The object's own axes: the columns of its rotation matrix",
@@ -385,14 +395,11 @@ function basis(s) {
 			`Vector3 up = transform.up;            // ${tuple(up)}`,
 			`Vector3 forward = transform.forward;  // ${tuple(forward)}`,
 			"",
-			`// Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-			`transform.Rotate(${axis}, ${f(sign * turn.deg, 1, "turn")}, Space.${local ? "Self" : "World"});`,
+			`// ${said}`,
+			"// Typed like Quaternion.Euler: x = -pitch, y = yaw, z = -roll",
+			`transform.Rotate(${f(a, 1, "tu0")}, ${f(b, 1, "tu1")}, ${f(c, 1, "tu2")}, Space.${local ? "Self" : "World"});`,
 		];
 	}
-	const slot = { pitch: 0, yaw: 1, roll: 2 }[turn.kind];
-	const r = [0, 1, 2].map((i) =>
-		f(i === slot ? turn.deg : 0, 1, i === slot ? "turn" : undefined),
-	);
 	return [
 		"// Unreal 5 · left-handed · Z up · forward is +X",
 		"// The Actor's own axes: the axes of its rotation matrix",
@@ -400,8 +407,8 @@ function basis(s) {
 		`const FVector Right = GetActorRightVector();      // ${tuple(right)}`,
 		`const FVector Up = GetActorUpVector();            // ${tuple(up)}`,
 		"",
-		`// Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-		`${local ? "AddActorLocalRotation" : "AddActorWorldRotation"}(FRotator(${r.join(", ")}));`,
+		`// ${said}`,
+		`${local ? "AddActorLocalRotation" : "AddActorWorldRotation"}(FRotator(${f(a, 1, "tu0")}, ${f(b, 1, "tu1")}, ${f(c, 1, "tu2")}));  // Pitch, Yaw, Roll`,
 	];
 }
 

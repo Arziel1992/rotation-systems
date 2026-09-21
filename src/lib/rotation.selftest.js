@@ -16,7 +16,7 @@
  * applied in that engine's own axes. The conversions cannot influence them.
  */
 
-import { generate, MARKER, plain, TURN } from "./code.js";
+import { generate, MARKER, plain } from "./code.js";
 import { highlight } from "./highlight.js";
 import { lookupIn, missingIn } from "./i18n/core.js";
 import en from "./i18n/en.js";
@@ -362,38 +362,31 @@ export function run() {
 			keptHealth.angles.every((a) => near(a, 90, 1e-6)),
 	);
 
-	/* --- the turn buttons' engine code turns the way its words say --- */
-	for (const engine of ["godot", "unity"]) {
-		const a = AXES[engine];
-		const apply = (kind, deg, v) => {
-			const [name, sign] = TURN[engine][kind];
-			const axis = {
-				"Vector3.RIGHT": [1, 0, 0],
-				"Vector3.UP": [0, 1, 0],
-				"Vector3.FORWARD": [0, 0, -1],
-				"Vector3.right": [1, 0, 0],
-				"Vector3.up": [0, 1, 0],
-				"Vector3.forward": [0, 0, 1],
-			}[name];
-			return R.rotate(qAxis(axis, sign * deg), v);
-		};
+	/* --- the basis tab's turn: one delta, own axes on the right, world's on the left --- */
+	const NO_TURN = { yaw: 0, pitch: 0, roll: 0 };
+	const posed = R.fromEuler({ yaw: 35, pitch: 20, roll: 10 });
+	const aTurn = { yaw: 15, pitch: 10, roll: -5 };
+	for (const local of [true, false]) {
+		const turned = R.retuneTurn(posed, NO_TURN, aTurn, local);
 		check(
-			`${engine}: 'pitch up' code lifts the nose`,
-			R.dot3(apply("pitch", 20, a.forward), a.up) > 0.3,
-		);
-		check(
-			`${engine}: 'turn right' code turns right`,
-			R.dot3(apply("yaw", 20, a.forward), a.right) > 0.3,
-		);
-		check(
-			`${engine}: 'bank right' code drops the right wing`,
-			R.dot3(apply("roll", 20, a.right), a.up) < -0.3,
-		);
-		check(
-			`${engine}: 'pitch up' with the sign flipped would dip it (negative control)`,
-			R.dot3(apply("pitch", -20, a.forward), a.up) < -0.3,
+			`basis: undoing a ${local ? "local" : "world"} turn restores the pose`,
+			sameQ(R.retuneTurn(turned, aTurn, NO_TURN, local), posed),
 		);
 	}
+	const yawed = (local) =>
+		R.retuneTurn(posed, NO_TURN, { ...NO_TURN, yaw: 30 }, local);
+	check(
+		"basis: a local yaw turns about the object's own up, which stays put",
+		nearVec(R.rotate(yawed(true), [0, 1, 0]), R.rotate(posed, [0, 1, 0])),
+	);
+	check(
+		"basis: a world yaw keeps the nose's height above the ground",
+		near(R.rotate(yawed(false), [0, 0, -1])[1], R.rotate(posed, [0, 0, -1])[1]),
+	);
+	check(
+		"basis: local and world turns differ once the object is posed (negative control)",
+		!sameQ(yawed(true), yawed(false)),
+	);
 
 	/* --- code generation --- */
 	const base = {
@@ -403,13 +396,13 @@ export function run() {
 		euler: { yaw: 35, pitch: 20, roll: 10 },
 		clamp: true,
 		q: R.fromEuler({ yaw: 35, pitch: 20, roll: 10 }),
-		axis: [0, 1, 0],
+		axisRaw: [0, 1, 0],
 		angle: 120,
 		slerpA: [...R.IDENTITY],
 		slerpB: far,
 		t: 0.4,
 		longway: { t: 0.4, from: 350, to: 10 },
-		lastTurn: { kind: "yaw", deg: 15, space: "local" },
+		lastTurn: { ...NO_TURN, yaw: 15, space: "local" },
 		cols: dirty,
 		orthonormalize: false,
 		fireOwn: true,
@@ -500,9 +493,20 @@ export function run() {
 	);
 
 	/* --- scrubbing a printed engine number moves that number, and only it --- */
+	// Printed values carrying ids `${prefix}0..2`, as numbers, in id order.
+	const printedIds = (s, prefix) => {
+		const found = Object.fromEntries(
+			[...generate({ ...s, scenario: null }).matchAll(MARKER)]
+				.filter((m) => m[1]?.startsWith(prefix))
+				.map((m) => [m[1], Number(m[2])]),
+		);
+		return [0, 1, 2].map((i) => found[`${prefix}${i}`]);
+	};
 	const scrubState = {
 		...base,
-		axisRaw: [1, 1, 1],
+		// Not unit length and no component at ±1: the slider clamp must not
+		// hide a move, and a normalised print would change every component.
+		axisRaw: [0.5, 0.25, -0.3],
 		angle: 120,
 		turnRate: 4,
 		progress: 0.3,
@@ -565,29 +569,66 @@ export function run() {
 			`${engine}: dragging the printed axis x up raises it, down lowers it`,
 			axUp[0] > axBefore[0] + 1e-6 && axDown[0] < axBefore[0] - 1e-6,
 		);
-	}
-	for (const [engine, kind] of [
-		["unity", "pitch"],
-		["godot", "yaw"],
-		["unreal", "roll"],
-	]) {
-		const st = {
-			...scrubState,
-			engine,
-			lastTurn: { kind, deg: 15, space: "local" },
-		};
-		const next = {
-			...st,
-			lastTurn: { ...st.lastTurn, deg: scrub(st, "turn", 4).turnDeg },
-		};
-		const printedTurn = (s) =>
-			[
-				...generate({ ...s, method: "basis", scenario: null }).matchAll(MARKER),
-			].find((m) => m[1] === "turn")[2];
+
+		// "Only it": the half the check above never asked. The axis was printed
+		// normalised, so one dragged component rescaled all three, and a test of
+		// the dragged one alone passed (MISTAKES.md, 2026-09-22).
+		const quatState = (axisRaw) => ({ ...st, method: "quat", axisRaw });
+		const axOnly = [0, 1, 2].every((i) => {
+			const before = printedIds(quatState(st.axisRaw), "ax");
+			const after = printedIds(
+				quatState(scrub(st, `ax${i}`, 0.2).axisRaw),
+				"ax",
+			);
+			return after.every((v, k) =>
+				near(v, before[k] + (k === i ? 0.2 : 0), 1e-9),
+			);
+		});
 		check(
-			`${engine}: dragging the printed turn by +4 prints 4 more (${kind})`,
-			near(Number(printedTurn(next)), Number(printedTurn(st)) + 4, 1e-9),
+			`${engine}: dragging one printed axis component moves exactly that one`,
+			axOnly,
 		);
+	}
+	for (const engine of R.ENGINES) {
+		for (const space of ["local", "world"]) {
+			const st = {
+				...scrubState,
+				engine,
+				method: "basis",
+				q: posed,
+				lastTurn: { ...aTurn, space },
+			};
+			const before = printedIds(st, "tu");
+			const turnOnly = [0, 1, 2].every((i) => {
+				const next = { ...scrub(st, `tu${i}`, 4).turn, space };
+				const after = printedIds({ ...st, lastTurn: next }, "tu");
+				return after.every((v, k) =>
+					near(v, before[k] + (k === i ? 4 : 0), 1e-9),
+				);
+			});
+			check(
+				`${engine}: dragging one printed turn number moves exactly that one (${space})`,
+				turnOnly,
+			);
+
+			// The printed line, run through the ENGINE's own Euler formula and
+			// multiplied on the side that engine uses, must make the turn shown.
+			const local = space === "local";
+			const delta = REFERENCE[engine](before);
+			const start = R.engineQuat(engine, posed);
+			const wanted = R.engineQuat(
+				engine,
+				R.retuneTurn(posed, NO_TURN, aTurn, local),
+			);
+			check(
+				`${engine}: the printed ${space} turn, applied the engine's way, makes the turn shown`,
+				sameQ(local ? R.mul(start, delta) : R.mul(delta, start), wanted),
+			);
+			check(
+				`${engine}: applied on the wrong side it would not (negative control, ${space})`,
+				!sameQ(local ? R.mul(delta, start) : R.mul(start, delta), wanted),
+			);
+		}
 	}
 	check(
 		"scrub: the fraction stays inside 0..1",

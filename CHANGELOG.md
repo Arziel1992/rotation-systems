@@ -3,6 +3,50 @@
 Reverse-chronological, newest first. Each heading is the release instant; the version in
 `package.json` is the same instant written `YYYY.M.D-HHMM`.
 
+## 2026-09-22 - 00:29
+
+Fixes and requests from the maintainer's testing of the live site.
+
+### Fixed
+
+- **Dragging one number of the quaternion's axis changed all three.** The code printed the axis
+  already normalised, so moving one component rescaled the others. It is now printed raw, as the
+  sliders hold it, and normalised in the code the way a game does it: `.normalized()` in Godot,
+  `.normalized` in Unity, `GetSafeNormal()` in Unreal. The self-check had tested that the dragged
+  number moved, never that the other two stayed put; it now tests both, and the new test fails on
+  the old code in all three engines.
+- **The basis tab showed one turn at a time.** Only the last axis turned was in the code, so to
+  drag a different angle you first had to turn that ring. The last turn is now one call with three
+  angles, each draggable: `transform.Rotate(x, y, z, Space.Self)` in Unity,
+  `AddActorLocalRotation(FRotator(P, Y, R))` in Unreal, and `transform.basis * Basis.from_euler(...)`
+  in Godot, with the world-space forms for world turns. A button or a ring drag starts a new turn
+  about one axis; dragging the other two numbers adds to it. The self-check applies the printed
+  numbers with each engine's own Euler formula, on the side that engine multiplies, and confirms
+  they reproduce the turn on screen. It also confirms that applying them on the wrong side does
+  not. Checked 2026-09-22: Unity's `Transform.Rotate` source, Godot's `Node3D` and `Basis` source,
+  and Unreal's documentation for `AddActorLocalRotation` and `AddActorWorldRotation`.
+- **The toolbar jumped in the quaternion view.** Manual, language and theme dropped to the bottom
+  of the split view; they now stay at the top right in every method. The 4D view's title sits below
+  them, and its hint at the bottom.
+- **The "In your engine" cards had square left corners.** They are rounded like the other cards.
+
+### Added
+
+- **The code panel folds and resizes.** A chevron beside Copy folds it to its header and back. A
+  grip on its top edge resizes it from 15% to 33% of the window, by dragging or from the keyboard
+  (arrows, Page Up/Down, Home, End). It is a WAI-ARIA window splitter with its value announced.
+  Both settings are remembered.
+- **Clicking outside the manual closes it**, as Esc already did.
+
+### Changed
+
+- **A better capybara.** The hand-built head is replaced by "Capybara" by Poly by Google
+  (CC BY 3.0, via Poly Pizza), a low-poly whole animal, credited on screen whenever it appears and
+  in the README. Its texture was reduced from 2048 to 512 px, taking the file from 2.7 MB to 82 KB.
+  It and its loader are fetched only on the rare load that shows it. The texture is added again as
+  a glow, whose strength is a theme token, so the fur measures 6.0:1 on the light background and
+  3.2:1 on the dark one. No free head-only model could be downloaded without an account.
+
 ## 2026-09-21 - 23:37
 
 Deployed, with a less missile-like aircraft and a capybara.

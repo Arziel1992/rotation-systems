@@ -19,11 +19,11 @@ import {
 	TorusGeometry,
 	Vector3,
 } from "three";
-import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+import capybaraUrl from "../assets/capybara.glb?url";
 
 const Y_AXIS = new Vector3(0, 1, 0);
 
@@ -64,9 +64,7 @@ function readTokens(get) {
 		bad: get("bad"),
 		muted: get("text-secondary"),
 		lattice: get("control-border"),
-		capy: get("capy"),
-		capySnout: get("capy-snout"),
-		capyEye: get("capy-eye"),
+		capyGlow: get("capy-glow"),
 	};
 }
 
@@ -153,42 +151,55 @@ function makeAircraft(ghost) {
 	return group;
 }
 
-/**
- * The easter egg: a capybara's head. Blocky skull, big blunt muzzle, small
- * ears, eyes high on the sides, and an orange balanced on top - the internet's
- * favourite capybara pose, and it marks "up" the way the plane's fin does.
- * Nose along -Z, like the plane, so every arrow and label still means the same.
+/*
+ * The easter egg: "Capybara" by Poly by Google, CC BY 3.0, from Poly Pizza
+ * (https://poly.pizza/m/66d-mKAgF17), credited on screen and in the README.
+ * Its texture was shrunk from 2048 to 512 px (2.7 MB to 82 KB). The file is
+ * fetched only on the rare visit that draws it, so nobody else downloads it.
+ *
+ * The file's own frame: feet on y = 0, 4.72 tall, 7.16 long, head towards +Z.
+ * Scaled to the plane's length, centred on its middle so it turns about its
+ * middle, and turned half round so the nose points -Z like the plane's.
  */
+const CAPY = { scale: 0.265, middle: 2.36 };
+let capybaraMesh = null;
+
+function loadCapybara() {
+	capybaraMesh ??= import("three/addons/loaders/GLTFLoader.js")
+		.then(({ GLTFLoader }) => new GLTFLoader().loadAsync(capybaraUrl))
+		.then(({ scene }) => scene.getObjectByProperty("isMesh", true));
+	return capybaraMesh;
+}
+
 function makeCapybara(ghost) {
-	const fur = material(ghost);
-	const muzzle = material(ghost);
-	const dark = material(ghost);
+	// The fur material exists now so colourModel can reach it; the texture
+	// arrives with the file.
+	const fur = ghost
+		? material(true)
+		: new MeshStandardMaterial({ flatShading: true, roughness: 1 });
 	const orange = material(ghost);
 	const group = new Group();
-	const eye = new SphereGeometry(0.055, 12, 10);
-	const ear = new SphereGeometry(0.11, 12, 10);
-	const earLeft = part(ear, muzzle, [-0.27, 0.36, 0.34]);
-	const earRight = part(ear, muzzle, [0.27, 0.36, 0.34]);
-	for (const e of [earLeft, earRight]) e.scale.set(1, 1, 0.55);
-	group.add(
-		part(new RoundedBoxGeometry(0.74, 0.64, 1.0, 4, 0.2), fur, [0, 0, 0.05]),
-		part(
-			new RoundedBoxGeometry(0.64, 0.5, 0.46, 4, 0.17),
-			muzzle,
-			[0, -0.07, -0.6],
-		),
-		part(eye, dark, [-0.37, 0.14, -0.14]),
-		part(eye, dark, [0.37, 0.14, -0.14]),
-		part(new SphereGeometry(0.04, 10, 8), dark, [-0.12, 0.03, -0.83]),
-		part(new SphereGeometry(0.04, 10, 8), dark, [0.12, 0.03, -0.83]),
-		earLeft,
-		earRight,
-		part(new SphereGeometry(0.15, 16, 12), orange, [0, 0.46, 0.02]),
-	);
-	group.userData = {
-		kind: "capybara",
-		materials: { fur, muzzle, dark, orange },
-	};
+	// An orange balanced on its head, the internet's favourite capybara pose:
+	// it marks "up" the way the plane's fin does.
+	group.add(part(new SphereGeometry(0.11, 16, 12), orange, [0, 0.66, -0.5]));
+	loadCapybara()
+		.then((mesh) => {
+			if (!ghost) {
+				// The texture again as a glow, its strength a theme token
+				// (colourModel): lit by the scene alone the fur measured 2.1:1 on
+				// the dark background, under the 3:1 an object needs.
+				fur.map = mesh.material.map;
+				fur.emissiveMap = mesh.material.map;
+				fur.needsUpdate = true;
+			}
+			const body = new Mesh(mesh.geometry, fur);
+			body.scale.setScalar(CAPY.scale);
+			body.rotation.y = Math.PI;
+			body.position.y = -CAPY.middle * CAPY.scale;
+			group.add(body);
+		})
+		.catch((error) => console.error("capybara model did not load", error));
+	group.userData = { kind: "capybara", materials: { fur, orange } };
 	return group;
 }
 
@@ -204,9 +215,10 @@ export function colourModel(model, c, ghost = false) {
 		return;
 	}
 	if (kind === "capybara") {
-		materials.fur.color.set(c.capy);
-		materials.muzzle.color.set(c.capySnout);
-		materials.dark.color.set(c.capyEye);
+		// White multiplies the texture by one: the fur keeps its own colours.
+		materials.fur.color.set("#ffffff");
+		materials.fur.emissive.set("#ffffff");
+		materials.fur.emissiveIntensity = Number(c.capyGlow);
 		materials.orange.color.set(c.nose);
 		return;
 	}

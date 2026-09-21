@@ -53,12 +53,13 @@ export default {
 	"viewLabel.aircraft":
 		"3D view of the aircraft: yaw {yaw}°, pitch {pitch}°, roll {roll}°",
 	"viewLabel.capybara":
-		"3D view of a capybara head: yaw {yaw}°, pitch {pitch}°, roll {roll}°",
+		"3D view of a capybara: yaw {yaw}°, pitch {pitch}°, roll {roll}°",
 	"objectTitle.aircraft": "The aircraft",
 	"objectTitle.capybara": "The capybara",
 	capybaraFound:
 		"A capybara has taken the aircraft's place for this visit. Its nose points forward and the orange on its head points up; everything else works the same.",
 	repository: "Repository",
+	modelCredit: "3D model",
 	hyperTitle: "q on the hypersphere (4D)",
 	hyperLabel:
 		"Stereographic projection of the unit quaternion q, in the scene's directions: no turn at the centre, every 180° turn on the unit sphere",
@@ -98,6 +99,10 @@ export default {
 
 	/* Code panel */
 	codeHeading: "The same pose in code",
+	hideCode: "Hide code",
+	showCode: "Show code",
+	resizeCode: "Resize the code panel",
+	codeSizeValue: "{n}% of the window height",
 	enginesLabel: "Engine",
 	"engine.godot": "Godot · GDScript",
 	"engine.unity": "Unity · C#",
@@ -117,7 +122,7 @@ export default {
 	"scrub.tg": "Target component {n}",
 	"scrub.rate": "Turn rate",
 	"scrub.t": "Fraction t",
-	"scrub.turn": "Turn angle",
+	"scrub.tu": "Turn number {n}",
 
 	/* Controls */
 	glossaryFor: "Glossary: {topic}",
@@ -157,7 +162,8 @@ export default {
 	turnYawRight: "Turn right",
 	turnRollLeft: "Bank left",
 	turnRollRight: "Bank right",
-	turnsHint: "Each press adds one 15° turn. The code shows the last one.",
+	turnsHint:
+		"Each press adds one 15° turn. The code shows the last turn as three angles; drag any of them to reshape it.",
 	showGizmo: "Show the rotation gizmo",
 	showGizmoHint:
 		"Drag a ring to turn about that axis, in the space chosen above.",
@@ -404,9 +410,9 @@ export default {
 	"engineNote.quat.unreal":
 		"FQuat(Axis, AngleRad) takes radians. Slerp corrects the alignment first; SlerpFullPath does not. == compares components exactly, and | is the dot product.",
 	"engineNote.basis.godot":
-		"transform.basis.x, .y and .z are the node's axes; forward is −basis.z. rotate_object_local and global_rotate turn it, and orthonormalized() cleans up drift.",
+		"transform.basis.x, .y and .z are the node's axes; forward is −basis.z. rotate_object_local and global_rotate turn it about one axis; multiplying by Basis.from_euler turns it by all three at once, on the right for its own axes and on the left for the world's. orthonormalized() cleans up drift.",
 	"engineNote.basis.unity":
-		"transform.right, up and forward are the object's axes. Rotate(axis, degrees, Space.Self or Space.World) turns it, and Matrix4x4.Rotate gives the matrix.",
+		"transform.right, up and forward are the object's axes. Rotate(x, y, z, Space.Self or Space.World) turns it, with the three angles typed as in Quaternion.Euler, and Matrix4x4.Rotate gives the matrix.",
 	"engineNote.basis.unreal":
 		"GetActorForwardVector, GetActorRightVector and GetActorUpVector are the Actor's X, Y and Z. AddActorLocalRotation and AddActorWorldRotation turn it.",
 	"engineNote.lookat.godot":

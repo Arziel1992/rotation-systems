@@ -19,10 +19,13 @@ COS30031 Games Programming (module 06), and serves any unit that teaches game tr
 - **Live code in three engines.** Values that come from the pose are highlighted and change as you
   turn it. The engines disagree about axes, handedness and signs, so the same pose is typed
   differently in each: Unity types nose-up as a negative `x`, Godot types turn-right as a negative
-  `y`, and Unreal names its angles.
+  `y`, and Unreal names its angles. The panel folds to its header and resizes up to a third of
+  the window; both are remembered.
 - **Everything can be dragged.** The aircraft; the gimbal rings; a rotation gizmo on the basis
   tab (local or world); the quaternion's axis tip and θ ring; q in the 4D view; the look-at target;
-  and **the numbers in the code**, which are sliders in the engine's own units.
+  and **the numbers in the code**, which are sliders in the engine's own units. Each number moves
+  alone: the quaternion's axis is printed raw and normalised in the code, and the basis tab's last
+  turn is one call with three angles (`Rotate(x, y, z)`, `FRotator`, `Basis.from_euler`).
 - **Break it.** Gimbal lock at 90° pitch; lerping 350° → 10° the long way round; slerp without the
   shortest-path check; q and −q; an unnormalised quaternion; basis drift; a world constant used as
   forward; and a look-at target passing overhead. Timed scenarios can be paused and scrubbed.
@@ -37,9 +40,9 @@ COS30031 Games Programming (module 06), and serves any unit that teaches game tr
   button, or any **?**.
 - **Checked against the engines.** Every sign is verified by the self-check against each engine's
   own composition formula, and every engine behaviour the tool states was checked against the
-  vendor's documentation or source on 21 September 2026 (see `CHANGELOG.md`).
+  vendor's documentation or source on 21 and 22 September 2026 (see `CHANGELOG.md`).
 - **English and Spanish; light and dark.** The language, the theme, the chosen method and engine,
-  and which side panels are open are remembered; theme and panels apply before the page paints.
+  and which panels are open are remembered; theme and side panels apply before the page paints.
 
 ## Mathematical Models
 
@@ -85,7 +88,7 @@ No command-line arguments. Two URL parameters:
 | Parameter | Effect |
 | --- | --- |
 | `?selftest` | Runs the self-check in the browser and prints a table to the console. |
-| `?model=aircraft` or `?model=capybara` | Forces the model. Without it, one load in a hundred swaps the aircraft for a capybara head (nose forward, an orange on top for up) and says so to screen readers. |
+| `?model=aircraft` or `?model=capybara` | Forces the model. Without it, one load in a hundred swaps the aircraft for a capybara (nose forward, an orange on its head for up) and says so to screen readers. Its file is fetched only then. |
 
 ### Controls
 
@@ -96,6 +99,9 @@ No command-line arguments. Two URL parameters:
 | Arrow keys, <kbd>Q</kbd>/<kbd>E</kbd> (3D view focused) | Turn the aircraft; <kbd>Shift</kbd> for bigger steps |
 | Arrow keys, <kbd>Page Up</kbd>/<kbd>Page Down</kbd> (look-at) | Move the target |
 | Drag a highlighted number in the code | Change it; or focus it and use the arrow keys |
+| Drag the grip above the code | Resize the code panel, 15–33% of the window; or focus it and use the arrow keys, <kbd>Home</kbd>, <kbd>End</kbd> |
+| The chevron beside **Copy** | Fold the code panel to its header, or unfold it |
+| Click outside the manual | Close it; so does <kbd>Esc</kbd> |
 | Drag the aircraft, a ring, the axis tip or q | Turn the aircraft |
 | Drag empty space / scroll | Orbit / zoom the camera |
 
@@ -149,7 +155,10 @@ Requires Node 24 and pnpm, both managed by Volta (`package.json` pins them). Dep
 ## License
 
 GNU Affero General Public License v3.0. See [LICENSE](./LICENSE). Font Awesome Free is used under
-its own licences (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT).
+its own licences (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT). The easter-egg model is
+[Capybara](https://poly.pizza/m/66d-mKAgF17) by Poly by Google, under
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), with its texture reduced from 2048 to
+512 px; it is credited on screen whenever it appears.
 
 ---
 _Made with ❤️ for Swinburne — 3D Rotation — By E. Ketterer_

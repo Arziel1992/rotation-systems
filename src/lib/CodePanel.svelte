@@ -17,7 +17,7 @@ import { t } from "./i18n/index.svelte.js";
 import { ENGINES } from "./rotation.js";
 import { PIXELS_PER_STEP, scrubStep } from "./scrub.js";
 
-let { snapshot, engine, onengine, onannounce, onscrub, onglossary } = $props();
+let { snapshot, engine, open = true, ontoggle, onengine, onannounce, onscrub, onglossary } = $props();
 
 const code = $derived(generate({ ...snapshot, engine }));
 const lines = $derived(highlight(code, LANGUAGE[engine]));
@@ -110,11 +110,26 @@ function scrubName(id) {
 				{t("copy")}
 			</button>
 			<button type="button" class="glossary-btn" aria-label={t("glossaryFor", { topic: t("codeHeading") })} onclick={() => onglossary("code-panel")}>?</button>
+			<!-- Folding keeps this header, so the button stays where it was and
+			     keyboard focus is never left on something that vanished. -->
+			<!-- An icon, named like the rail toggles: with a word it pushed the
+			     tools onto a second row, which the code paid for in lines. -->
+			<button
+				type="button"
+				class="copy"
+				aria-expanded={open}
+				aria-controls="code-body"
+				aria-label={open ? t("hideCode") : t("showCode")}
+				title={open ? t("hideCode") : t("showCode")}
+				onclick={ontoggle}
+			>
+				<i class="fa-solid {open ? 'fa-chevron-down' : 'fa-chevron-up'}" aria-hidden="true"></i>
+			</button>
 		</div>
 	</div>
 	<!-- The panel scrolls, so it is focusable (WAI-ARIA tabs: tabindex 0 on
 	     the tabpanel); the draggable values inside are focusable too. -->
-	<div id="code-body" class="body" role="tabpanel" aria-labelledby="engine-{engine}" tabindex="0">
+	<div id="code-body" class="body" role="tabpanel" aria-labelledby="engine-{engine}" tabindex="0" hidden={!open}>
 		<pre aria-label={t("codeRegion", { engine: t(`engine.${engine}`) })}><code
 				>{#each lines as line, i (i)}<span class="line"
 						>{#each line as token, j (j)}{#if token.cls === "live" && token.id}<span
@@ -134,12 +149,15 @@ function scrubName(id) {
 					>{/each}</code
 			></pre>
 	</div>
-	<p class="legend" id="scrub-help">
-		<span class="live scrub sample" aria-hidden="true">0.0</span>
-		{t("scrubLegend")}
-		<mark class="live sample" aria-hidden="true">0.0</mark>
-		{t("liveLegend")}
-	</p>
+	<!-- Not `hidden`: its `display: flex` would override the attribute. -->
+	{#if open}
+		<p class="legend" id="scrub-help">
+			<span class="live scrub sample" aria-hidden="true">0.0</span>
+			{t("scrubLegend")}
+			<mark class="live sample" aria-hidden="true">0.0</mark>
+			{t("liveLegend")}
+		</p>
+	{/if}
 </section>
 
 <style>
