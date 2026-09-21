@@ -1,0 +1,85 @@
+name: Deploy to GitHub Pages
+
+# Alpine is not an option here, and the reason is worth recording so it is not
+# re-proposed. There is no GitHub-hosted Alpine runner - `runs-on` offers only
+# `ubuntu-*` on Linux. Alpine can appear only as a job `container:`, which still
+# provisions an Ubuntu host VM underneath, so it saves nothing; and it then
+# fails, because the runner injects a glibc-built Node to execute JavaScript
+# actions and Alpine is musl. Every action below is a JavaScript action.
+# See actions/setup-node#1293 and actions/runner#1637.
+#
+# `ubuntu-24.04-arm` is the smaller footprint that is actually available, and
+# it is CONFIRMED WORKING - not an assumption to be re-litigated. On
+# 2026-09-01 all seven tools with remotes were pushed, all seven workflow runs
+# completed successfully on ARM64, and the deployed Pages sites were checked
+# in a browser by the maintainer. ARM64 runners are free on public
+# repositories and draw less power per build.
+#
+# What makes it work: every native dependency in the build resolves an
+# arm64 binary from the lockfile - @rolldown/binding-linux-arm64-gnu,
+# lightningcss-linux-arm64-gnu, @biomejs/cli-linux-arm64. Nothing in the
+# toolchain is x64-only.
+#
+# What would break it, and the only thing to watch: adding a dependency whose
+# native binary ships no linux-arm64 build. That fails at install or build
+# time on CI while still working on an x64 developer machine, so the symptom
+# appears only after a push. If a new native dependency is added, check its
+# optional dependencies for a linux-arm64 entry BEFORE assuming CI is broken
+# for some other reason.
+
+on:
+    push:
+        branches: [main]
+
+# Deliberately NOT granted at workflow level. `pages: write` and `id-token:
+# write` belong to the deploy job alone, so a compromised build dependency
+# cannot mint an OIDC token and publish. Granting them here would hand them to
+# the build job too, which is the whole reason the jobs are split.
+permissions:
+    contents: read
+
+concurrency:
+    group: pages
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: ubuntu-24.04-arm
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  persist-credentials: false
+
+            # Installs pnpm AND the Node runtime in one step, from a
+            # self-contained binary. Replaces pnpm/action-setup (deprecated for
+            # pnpm 11+) and actions/setup-node together.
+            - uses: pnpm/setup@v2
+              with:
+                  version: 11.25.0
+                  runtime: node@24.20.0
+                  cache: true
+                  install: false
+
+            # Explicit rather than the action's `install: true`, so the deploy
+            # cannot silently resolve new dependencies if pnpm's CI default for
+            # frozen lockfiles ever changes. A deploy pipeline's reproducibility
+            # should be visible in the file, not inherited from an env var.
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm run build
+
+            - uses: actions/upload-pages-artifact@v5
+              with:
+                  path: dist
+
+    deploy:
+        needs: build
+        runs-on: ubuntu-24.04-arm
+        permissions:
+            pages: write
+            id-token: write
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - id: deployment
+              uses: actions/deploy-pages@v5

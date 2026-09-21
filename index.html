@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+		<title>Rotation Systems</title>
+		<meta
+			name="description"
+			content="Turn a 3D object with Euler angles, quaternions, a basis or look-at, and watch the same orientation written live in GDScript, Unity C# and Unreal C++ - including where each method breaks."
+		/>
+
+		<!--
+			Theme, language and the explanation rail before first paint, so there
+			is no flash of the wrong palette (global §9). Wrapped in try/catch
+			because localStorage throws outright in a private window with site
+			data blocked, and a tool that white-screens has failed at the one job
+			this script has.
+		-->
+		<script>
+			(() => {
+				var theme = "light";
+				var locale = null;
+				try {
+					theme = localStorage.getItem("rotation-systems.theme") || "light";
+					locale = localStorage.getItem("rotation-systems.locale");
+					if (localStorage.getItem("rotation-systems.theory") === "hidden") {
+						document.documentElement.dataset.theory = "hidden";
+					}
+				} catch {}
+				document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
+				if (!locale) {
+					const browser = navigator.languages?.[0] || navigator.language || "en";
+					locale = browser.toLowerCase().startsWith("es") ? "es" : "en";
+				}
+				document.documentElement.lang = locale;
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="app"></div>
+		<script type="module" src="/src/main.js"></script>
+	</body>
+</html>

@@ -1,0 +1,50 @@
+// Canonical markdownlint configuration for every tool in this workspace.
+// Honoured by DavidAnson.vscode-markdownlint.
+//
+// CANONICAL - do not fork. Copied to each tool as `.markdownlint.jsonc` by
+// `tool-scaffold`; `Scripts/check_conformance.py` reports any tool whose copy
+// has drifted from this file.
+//
+// Every rule disabled below carries a stated reason (global CLAUDE.md §3).
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint/main/schema/markdownlint-config-schema.json",
+  "default": true,
+
+  // MD013 line-length: off.
+  // Why: READMEs mix prose with wide tables and long URLs. Hard-wrapping makes
+  // diffs unreadable without changing the rendered output.
+  "MD013": false,
+
+  // MD024 no-duplicate-heading: siblings only.
+  // Why: every CHANGELOG.md repeats section headings under each dated release
+  // heading. That repetition is the required format, not a defect.
+  "MD024": { "siblings_only": true },
+
+  // MD033 inline-HTML: off.
+  // Why: READMEs carry badges and a tool's own markup is quoted inline.
+  "MD033": false,
+
+  // MD036 no-emphasis-as-heading: off.
+  // Why: every tool ends with the mandated one-line attribution footer,
+  // `_Made with ... - By E. Ketterer_` (CLAUDE.md, "Attribution Is The
+  // Swinburne Form"). MD036's heuristic reads an emphasised line followed by
+  // nothing as a heading it should be. It is a footer, it is required to look
+  // like that, and it is the last line of the file - so the rule is wrong here
+  // in every tool, every time. Disabled rather than worked around, because
+  // changing the footer to satisfy a heuristic would break the house form.
+  "MD036": false,
+
+  // MD041 first-line-heading: allow YAML front matter before the H1.
+  "MD041": { "front_matter_title": "" },
+
+  // MD060 table-column-style: off.
+  // Why: prose cells vary wildly in width, so "aligned" pipes would need the
+  // whole table realigned on every wording change, for identical output.
+  "MD060": false,
+
+  // Consistent markers, matching the workspace root and the Swin-Units
+  // companion workspace, so a file moving between them does not reformat.
+  "MD004": { "style": "dash" },
+  "MD049": { "style": "underscore" },
+  "MD050": { "style": "asterisk" }
+}
