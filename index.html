@@ -9,13 +9,20 @@
 			name="description"
 			content="Turn a 3D object with Euler angles, quaternions, a basis or look-at, and watch the same orientation written live in GDScript, Unity C# and Unreal C++ - including where each method breaks."
 		/>
+		<!-- Inter (UI) and JetBrains Mono (code), as every house tool loads them. -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap"
+			rel="stylesheet"
+		/>
 
 		<!--
-			Theme, language and the explanation rail before first paint, so there
-			is no flash of the wrong palette (global §9). Wrapped in try/catch
-			because localStorage throws outright in a private window with site
-			data blocked, and a tool that white-screens has failed at the one job
-			this script has.
+			Theme, language and which rails are open, before first paint, so there
+			is no flash of the wrong palette or layout (global §9). Wrapped in
+			try/catch because localStorage throws outright in a private window with
+			site data blocked, and a tool that white-screens has failed at the one
+			job this script has.
 		-->
 		<script>
 			(() => {
@@ -26,6 +33,9 @@
 					locale = localStorage.getItem("rotation-systems.locale");
 					if (localStorage.getItem("rotation-systems.theory") === "hidden") {
 						document.documentElement.dataset.theory = "hidden";
+					}
+					if (localStorage.getItem("rotation-systems.controls") === "hidden") {
+						document.documentElement.dataset.controls = "hidden";
 					}
 				} catch {}
 				document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";

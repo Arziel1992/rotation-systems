@@ -16,11 +16,13 @@
  * applied in that engine's own axes. The conversions cannot influence them.
  */
 
-import { generate, TURN } from "./code.js";
+import { generate, MARKER, plain, TURN } from "./code.js";
+import { highlight } from "./highlight.js";
 import { lookupIn, missingIn } from "./i18n/core.js";
 import en from "./i18n/en.js";
 import es from "./i18n/es.js";
 import * as R from "./rotation.js";
+import { axisOf, scrub } from "./scrub.js";
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
 const nearVec = (a, b, eps = 1e-6) => a.every((c, i) => near(c, b[i], eps));
@@ -73,7 +75,7 @@ const AXES = {
  * before looking for a leaked `undefined`, `null`, `NaN` or `Infinity`.
  */
 export function leaks(text) {
-	const values = [...text.matchAll(/⟦([^⟧]*)⟧/g)].map((m) => m[1]);
+	const values = [...text.matchAll(MARKER)].map((m) => m[2]);
 	if (values.some((v) => !Number.isFinite(Number(v)))) return true;
 	const prose = text
 		.replaceAll("roll undefined", "")
@@ -450,18 +452,195 @@ export function run() {
 	);
 	check(
 		"code: Unity types pitch-up 20 as x = -20",
-		generate(base).includes("_x = ⟦-20.0⟧f"),
+		generate(base).includes("_x = ⟦e0|-20.0⟧f"),
 	);
 	check(
 		"code: Godot types the same pose as x = +20",
 		generate({ ...base, engine: "godot" }).includes(
-			"Vector3(⟦20.0⟧, ⟦-35.0⟧, ⟦-10.0⟧)",
+			"Vector3(⟦e0|20.0⟧, ⟦e1|-35.0⟧, ⟦e2|-10.0⟧)",
 		),
 	);
 	check(
 		"code: Unreal types it by name",
 		generate({ ...base, engine: "unreal" }).includes(
-			"Angles(⟦20.0⟧f, ⟦35.0⟧f, ⟦10.0⟧f)",
+			"Angles(⟦e0|20.0⟧f, ⟦e1|35.0⟧f, ⟦e2|10.0⟧f)",
+		),
+	);
+
+	/* --- comments are comments, code values are code --- */
+	const godotLines = highlight(
+		generate({ ...base, engine: "godot" }),
+		"gdscript",
+	);
+	const liveInComments = godotLines
+		.flat()
+		.filter((tk) => tk.cls === "com" && /⟦/.test(tk.text));
+	const poseLine = godotLines.find((l) =>
+		l.some((tk) => tk.cls === "com" && tk.text.includes("Pose:")),
+	);
+	check(
+		"code: a value inside a comment renders as comment text, not as a live value",
+		liveInComments.length === 0 &&
+			poseLine &&
+			!poseLine.some((tk) => tk.cls === "live"),
+	);
+	const typedLine = godotLines.find((l) =>
+		l.some((tk) => tk.text === "Vector3"),
+	);
+	check(
+		"code: a value in code IS live and carries its drag id (negative control)",
+		typedLine
+			?.filter((tk) => tk.cls === "live")
+			.map((tk) => tk.id)
+			.join() === "e0,e1,e2",
+	);
+	check(
+		"code: plain() strips markers and ids for copying",
+		plain("x = ⟦e0|-20.0⟧f; // ⟦0.5⟧") === "x = -20.0f; // 0.5",
+	);
+
+	/* --- scrubbing a printed engine number moves that number, and only it --- */
+	const scrubState = {
+		...base,
+		axisRaw: [1, 1, 1],
+		angle: 120,
+		turnRate: 4,
+		progress: 0.3,
+		target: [2, 1, -3],
+	};
+	for (const engine of R.ENGINES) {
+		const st = { ...scrubState, engine };
+		const before = R.engineEuler(engine, st.euler);
+		const moved = [0, 1, 2].every((i) => {
+			const after = R.engineEuler(engine, scrub(st, `e${i}`, 7).euler);
+			return after.every((v, k) =>
+				near(v, before[k] + (k === i ? 7 : 0), 1e-9),
+			);
+		});
+		check(
+			`${engine}: dragging a typed Euler number moves exactly that number`,
+			moved,
+		);
+
+		const ang0 = R.engineAxisAngle(engine, axisOf(st.axisRaw), st.angle).angle;
+		const ang1 = R.engineAxisAngle(
+			engine,
+			axisOf(st.axisRaw),
+			scrub(st, "ang", 5).angle,
+		).angle;
+		check(
+			`${engine}: dragging the printed angle up moves it up`,
+			near(ang1, ang0 + 5, 1e-9),
+		);
+
+		const unit = R.unitsPerMetre(engine);
+		const tgBefore = R.engineVec(engine, st.target).map((c) => c * unit);
+		const tgAfter = R.engineVec(
+			engine,
+			scrub(st, "tg1", (10 * unit) / 100).target,
+		).map((c) => c * unit);
+		check(
+			`${engine}: dragging the printed target Y moves only Y`,
+			tgAfter.every((v, k) =>
+				near(v, tgBefore[k] + (k === 1 ? (10 * unit) / 100 : 0), 1e-9),
+			),
+		);
+
+		const axBefore = R.engineAxisAngle(
+			engine,
+			axisOf(st.axisRaw),
+			st.angle,
+		).axis;
+		const axUp = R.engineAxisAngle(
+			engine,
+			axisOf(scrub(st, "ax0", 0.2).axisRaw),
+			st.angle,
+		).axis;
+		const axDown = R.engineAxisAngle(
+			engine,
+			axisOf(scrub(st, "ax0", -0.2).axisRaw),
+			st.angle,
+		).axis;
+		check(
+			`${engine}: dragging the printed axis x up raises it, down lowers it`,
+			axUp[0] > axBefore[0] + 1e-6 && axDown[0] < axBefore[0] - 1e-6,
+		);
+	}
+	for (const [engine, kind] of [
+		["unity", "pitch"],
+		["godot", "yaw"],
+		["unreal", "roll"],
+	]) {
+		const st = {
+			...scrubState,
+			engine,
+			lastTurn: { kind, deg: 15, space: "local" },
+		};
+		const next = {
+			...st,
+			lastTurn: { ...st.lastTurn, deg: scrub(st, "turn", 4).turnDeg },
+		};
+		const printedTurn = (s) =>
+			[
+				...generate({ ...s, method: "basis", scenario: null }).matchAll(MARKER),
+			].find((m) => m[1] === "turn")[2];
+		check(
+			`${engine}: dragging the printed turn by +4 prints 4 more (${kind})`,
+			near(Number(printedTurn(next)), Number(printedTurn(st)) + 4, 1e-9),
+		);
+	}
+	check(
+		"scrub: the fraction stays inside 0..1",
+		scrub(scrubState, "t", 5).progress === 1 &&
+			scrub(scrubState, "t", -5).progress === 0,
+	);
+	check(
+		"scrub: an id it does not own changes nothing (negative control)",
+		scrub(scrubState, "nope", 1) === null,
+	);
+
+	/* --- dragging a gimbal ring turns about that ring's own axis --- */
+	const ringPose = { yaw: 35, pitch: 20, roll: 10 };
+	const axesNow = R.ringAxes(ringPose);
+	const ringOk = ["yaw", "pitch", "roll"].every((kind) => {
+		const next = {
+			...ringPose,
+			[kind]: ringPose[kind] + R.ringToAngle(kind, 12),
+		};
+		return sameQ(
+			R.fromEuler(next),
+			R.mul(qAxis(axesNow[kind], 12), R.fromEuler(ringPose)),
+		);
+	});
+	check(
+		"rings: a 12° drag about each ring's axis is that ring's angle changing",
+		ringOk,
+	);
+	check(
+		"rings: the yaw sign flip is needed (negative control)",
+		!sameQ(
+			R.fromEuler({ ...ringPose, yaw: ringPose.yaw + 12 }),
+			R.mul(qAxis(axesNow.yaw, 12), R.fromEuler(ringPose)),
+		),
+	);
+
+	/* --- dragging q in the 4D view --- */
+	const back4 = POSES.every((e) => {
+		const qe = R.fromEuler(e);
+		const p = R.stereographic(qe);
+		return !p || sameQ(R.fromStereographic(p), qe);
+	});
+	check("4D: un-projecting a projected q returns q", back4);
+	check(
+		"4D: the centre un-projects to no turn",
+		sameQ(R.fromStereographic([0, 0, 0]), R.IDENTITY),
+	);
+	check(
+		"4D: a point on the unit sphere un-projects to a 180° turn (negative control: not 90°)",
+		near(
+			R.orientationAngle(R.IDENTITY, R.fromStereographic([0, 1, 0])),
+			180,
+			1e-6,
 		),
 	);
 	check(

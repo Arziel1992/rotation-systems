@@ -136,6 +136,52 @@ export function makeRing(radius, tube = 0.02) {
 	);
 }
 
+/**
+ * An invisible, fat twin of a ring, so a 2 px ring can be grabbed without
+ * pixel hunting. Shown faintly on hover. `pick` says what it is for.
+ */
+export function makePickRing(radius, pick) {
+	const ring = new Mesh(
+		new TorusGeometry(radius, 0.11, 8, 72),
+		new MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+	);
+	ring.userData.pick = pick;
+	return ring;
+}
+
+/**
+ * Turn a pointer drag into degrees of rotation about a ring's axis.
+ *
+ * At the grab point, the ring's positive direction (right-hand rule about
+ * `axis`) is projected to the screen; dragging along it turns positive, and
+ * a drag the length of the ring's on-screen radius is one radian. Unlike
+ * intersecting a plane, this still works when the ring is seen edge-on.
+ * Returns (dx, dy) => degrees, both in screen pixels.
+ */
+export function ringDragger(camera, size, centre, axis, radius, hit) {
+	const c = new Vector3(...centre);
+	const a = new Vector3(...axis).normalize();
+	const h = new Vector3(...hit).sub(c);
+	h.addScaledVector(a, -h.dot(a));
+	if (h.lengthSq() < 1e-9) h.set(1, 0, 0).cross(a);
+	const grab = c.clone().addScaledVector(h.normalize(), radius);
+	const tangent = a.clone().cross(h).normalize();
+	const px = (v) => {
+		const p = v.clone().project(camera);
+		return [((p.x + 1) / 2) * size.width, ((1 - p.y) / 2) * size.height];
+	};
+	const g = px(grab);
+	const ahead = px(grab.clone().addScaledVector(tangent, 0.25));
+	const mid = px(c);
+	let tx = ahead[0] - g[0];
+	let ty = ahead[1] - g[1];
+	const tl = Math.hypot(tx, ty) || 1;
+	tx /= tl;
+	ty /= tl;
+	const onScreen = Math.max(30, Math.hypot(g[0] - mid[0], g[1] - mid[1]));
+	return (dx, dy) => ((dx * tx + dy * ty) / onScreen) * (180 / Math.PI);
+}
+
 export function makeDot(radius = 0.07, lit = false) {
 	return new Mesh(
 		new SphereGeometry(radius, 20, 14),

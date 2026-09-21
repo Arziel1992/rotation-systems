@@ -1,11 +1,15 @@
 /**
  * A small tokenizer for the three languages the code panel shows. Enough to
- * colour keywords, types, numbers, strings and comments, and to mark ⟦live⟧
+ * colour keywords, types, numbers, strings and comments, and to mark live
  * values - not a parser, and it does not need to be one: the only input is
  * the text code.js writes.
  *
- * ponytail: patterns avoid backslash escapes ([0-9], [.]) on purpose, so they
- * survive any tool that rewrites this file (global §16). Keep them that way.
+ * A live value in CODE becomes a `live` token, carrying its id when it can be
+ * dragged. A live value inside a COMMENT is just comment text: rendering it as
+ * a code value mixed the two and read as if the comment were code.
+ *
+ * ponytail: patterns avoid backslash escapes ([0-9], [.], [|]) on purpose, so
+ * they survive any tool that rewrites this file (global §16). Keep them so.
  */
 
 const KEYWORDS = {
@@ -30,30 +34,22 @@ const COMMENT = { gdscript: "#", csharp: "//", cpp: "//" };
 
 // live value | string | number | word | anything else, one char at a time
 const TOKEN =
-	/(⟦[^⟧]*⟧)|("[^"]*")|((?<![A-Za-z_])-?[0-9]+(?:[.][0-9]+)?)|([A-Za-z_][A-Za-z0-9_]*)|([^⟦"A-Za-z0-9_-]+|.)/g;
+	/⟦(?:([a-z0-9]+)[|])?([^⟧]*)⟧|("[^"]*")|((?<![A-Za-z_])-?[0-9]+(?:[.][0-9]+)?)|([A-Za-z_][A-Za-z0-9_]*)|([^⟦"A-Za-z0-9_-]+|.)/g;
 
-function splitLive(text, cls) {
-	const out = [];
-	for (const part of text.split(/(⟦[^⟧]*⟧)/)) {
-		if (!part) continue;
-		if (part.startsWith("⟦"))
-			out.push({ cls: "live", text: part.slice(1, -1) });
-		else out.push({ cls, text: part });
-	}
-	return out;
-}
+const unmark = (text) => text.replace(/⟦(?:[a-z0-9]+[|])?([^⟧]*)⟧/g, "$1");
 
-/** One line of source to [{ cls, text }]. */
+/** One line of source to [{ cls, text, id? }]. */
 function line(source, language) {
 	const marker = COMMENT[language];
 	const at = source.indexOf(marker);
 	const code = at === -1 ? source : source.slice(0, at);
-	const comment = at === -1 ? "" : source.slice(at);
+	const comment = at === -1 ? "" : unmark(source.slice(at));
 	const keywords = KEYWORDS[language];
 	const tokens = [];
 	for (const m of code.matchAll(TOKEN)) {
-		const [whole, liveValue, str, number, word] = m;
-		if (liveValue) tokens.push({ cls: "live", text: liveValue.slice(1, -1) });
+		const [whole, id, liveValue, str, number, word] = m;
+		if (liveValue !== undefined)
+			tokens.push({ cls: "live", text: liveValue, id });
 		else if (str) tokens.push({ cls: "str", text: str });
 		else if (number) tokens.push({ cls: "num", text: number });
 		else if (word) {
@@ -61,7 +57,7 @@ function line(source, language) {
 			tokens.push({ cls, text: word });
 		} else tokens.push({ cls: "", text: whole });
 	}
-	if (comment) tokens.push(...splitLive(comment, "com"));
+	if (comment) tokens.push({ cls: "com", text: comment });
 	return tokens;
 }
 

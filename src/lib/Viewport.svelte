@@ -3,9 +3,15 @@
  * The main 3D view. Draws what it is given and reports what the learner does
  * to it; it never decides an orientation itself (App.svelte does).
  *
- * Dragging the aircraft turns it; dragging empty space orbits the camera;
- * dragging the target (look-at tab) moves the target. The canvas takes
- * keyboard focus and forwards keys to App, which owns their meaning.
+ * Things that can be dragged, nearest hit first:
+ *   the gimbal rings (Euler)       -> onring(kind, degrees)
+ *   the gizmo rings (basis)        -> ongizmo(axis, degrees, phase)
+ *   the axis tip and θ ring (quat) -> onaxis(axis), onangle(degrees)
+ *   the target (look-at)           -> ontarget(position)
+ *   the aircraft                   -> onturn(quaternion)
+ *   empty space                    -> orbits the camera (and onview, aligned)
+ * Degrees are always a turn about the ring's own axis, right-hand rule; App
+ * turns that into the method's own angle (rotation.js, ringToAngle).
  */
 import { onMount } from "svelte";
 import {
@@ -20,6 +26,7 @@ import {
 	Plane,
 	Raycaster,
 	Scene,
+	Sphere,
 	Vector2,
 	Vector3,
 	WebGLRenderer,
@@ -36,6 +43,7 @@ import {
 	mul,
 	normalize,
 	normalize3,
+	ringAxes,
 	rotate,
 	scale3,
 } from "./rotation.js";
@@ -49,8 +57,10 @@ import {
 	makeDot,
 	makeLabel,
 	makeLines,
+	makePickRing,
 	makeRing,
 	readColours,
+	ringDragger,
 	setArrow,
 	setLabel,
 	setPolylines,
@@ -62,6 +72,7 @@ let {
 	engine,
 	reducedMotion = false,
 	gimbal = null,
+	gizmo = null,
 	showAxes = true,
 	ghosts = [],
 	trails = [],
@@ -69,11 +80,17 @@ let {
 	target = null,
 	rays = [],
 	dragObject = true,
+	alignDir = null,
 	labels,
 	ariaLabel,
 	describedBy,
 	onturn,
 	ontarget,
+	onring,
+	ongizmo,
+	onaxis,
+	onangle,
+	onview,
 	onkeydown,
 } = $props();
 
@@ -85,6 +102,9 @@ const LOCAL = { right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1] };
 const LOCAL_LENGTH = { right: 1.25, up: 1.0, forward: 1.55 };
 const RINGS = { yaw: 2.15, pitch: 1.95, roll: 1.75 };
 const SEMANTIC = { yaw: "up", pitch: "right", roll: "forward" };
+const GIZMO_RADIUS = 1.45;
+const AXIS_LENGTH = 2.5;
+const ARC = { at: 1.9, radius: 0.5 };
 
 onMount(() => {
 	let renderer;
@@ -113,7 +133,7 @@ onMount(() => {
 
 	const scene = new Scene();
 	const camera = new PerspectiveCamera(38, 1, 0.1, 100);
-	// Far enough back to frame the rings' labels and a target 3.4 m overhead.
+	// Far enough back to frame the rings' labels and a target overhead.
 	camera.position.set(6.3, 3.8, 5.6);
 	const controls = new OrbitControls(camera, canvas);
 	controls.enablePan = false;
@@ -136,6 +156,7 @@ onMount(() => {
 
 	/* ---- the aircraft and its own axes ---- */
 	const aircraft = makeAircraft();
+	aircraft.userData.pick = { kind: "object" };
 	scene.add(aircraft);
 	const localArrows = {};
 	const localLabels = {};
@@ -147,25 +168,41 @@ onMount(() => {
 		aircraft.add(localArrows[key], localLabels[key]);
 	}
 
-	/* ---- the gimbal: one ring and one axis per Euler angle ---- */
+	/* ---- the gimbal: one ring and one axis per Euler angle, draggable ---- */
 	const gimbalGroup = new Group();
 	scene.add(gimbalGroup);
 	const rings = {};
+	const ringPicks = {};
 	const ringHolders = {};
-	const ringAxes = {};
+	const ringAxisArrows = {};
 	const ringLabels = {};
 	for (const key of Object.keys(RINGS)) {
 		rings[key] = makeRing(RINGS[key]);
+		ringPicks[key] = makePickRing(RINGS[key], { kind: "ring", name: key });
 		ringHolders[key] = new Group();
-		ringHolders[key].add(rings[key]);
-		ringAxes[key] = makeArrow(0.016);
+		ringHolders[key].add(rings[key], ringPicks[key]);
+		ringAxisArrows[key] = makeArrow(0.016);
 		ringLabels[key] = makeLabel();
-		gimbalGroup.add(ringHolders[key], ringAxes[key], ringLabels[key]);
+		gimbalGroup.add(ringHolders[key], ringAxisArrows[key], ringLabels[key]);
 	}
-	rings.yaw.rotation.x = Math.PI / 2; // perpendicular to up
-	rings.pitch.rotation.y = Math.PI / 2; // perpendicular to right
+	// perpendicular to up, and to right; roll's ring is already across -Z
+	for (const mesh of [rings.yaw, ringPicks.yaw]) mesh.rotation.x = Math.PI / 2;
+	for (const mesh of [rings.pitch, ringPicks.pitch]) mesh.rotation.y = Math.PI / 2;
 
-	/* ---- ghosts, trails, quaternion axis, target, rays ---- */
+	/* ---- the basis gizmo: rings about the object's own (or world) axes ---- */
+	const gizmoGroup = new Group();
+	scene.add(gizmoGroup);
+	const gizmoRings = {};
+	const gizmoPicks = {};
+	for (const name of Object.keys(LOCAL)) {
+		gizmoRings[name] = makeRing(GIZMO_RADIUS, 0.014);
+		gizmoPicks[name] = makePickRing(GIZMO_RADIUS, { kind: "gizmo", name });
+		gizmoGroup.add(gizmoRings[name], gizmoPicks[name]);
+	}
+	for (const mesh of [gizmoRings.up, gizmoPicks.up]) mesh.rotation.x = Math.PI / 2;
+	for (const mesh of [gizmoRings.right, gizmoPicks.right]) mesh.rotation.y = Math.PI / 2;
+
+	/* ---- ghosts, trails ---- */
 	const ghostPool = [0, 1].map(() => {
 		const plane = makeAircraft({ ghost: true });
 		const label = makeLabel("quiet");
@@ -179,22 +216,33 @@ onMount(() => {
 		good: { lines: track(makeLines(3.5, false)), label: makeLabel("good") },
 		bad: { lines: track(makeLines(3.5, true)), label: makeLabel("bad") },
 	};
-	for (const t of Object.values(trailPool)) scene.add(t.lines, t.label);
+	for (const tr of Object.values(trailPool)) scene.add(tr.lines, tr.label);
 
+	/* ---- quaternion axis: a draggable tip, and a draggable θ ring ---- */
 	const axisGroup = new Group();
-	const axisPlus = makeArrow(0.02);
+	const axisPlus = makeArrow(0.022);
 	const axisMinus = track(makeLines(2, true));
-	const arc = track(makeLines(3, false));
-	const arcHead = makeArrow(0.02);
+	const axisTip = makeDot(0.12);
+	const axisTipPick = makeDot(0.32);
+	axisTipPick.material = new MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+	axisTipPick.userData.pick = { kind: "axis" };
+	const arcHolder = new Group();
+	const arcRing = makeRing(ARC.radius, 0.016);
+	const arcPick = makePickRing(ARC.radius, { kind: "angle" });
+	arcHolder.add(arcRing, arcPick);
+	const arcSweep = track(makeLines(4, false));
+	const arcHead = makeArrow(0.024);
 	const axisLabel = makeLabel("quiet");
 	const arcLabel = makeLabel();
-	axisGroup.add(axisPlus, axisMinus, arc, arcHead, axisLabel, arcLabel);
+	axisGroup.add(axisPlus, axisMinus, axisTip, axisTipPick, arcHolder, arcSweep, arcHead, axisLabel, arcLabel);
 	scene.add(axisGroup);
 
+	/* ---- look-at target ---- */
 	const targetGroup = new Group();
 	const targetDot = makeDot(0.15, true);
 	const targetPick = makeDot(0.4);
 	targetPick.material = new MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+	targetPick.userData.pick = { kind: "target" };
 	const sightLine = track(makeLines(2, true));
 	const targetLabel = makeLabel("target");
 	targetLabel.position.set(0, 0.35, 0);
@@ -212,11 +260,11 @@ onMount(() => {
 	scene.add(bullet);
 
 	/* ---- world-axes gizmo, drawn in the corner ---- */
-	const gizmoScene = new Scene();
-	const gizmoCamera = new PerspectiveCamera(40, 1, 0.1, 20);
-	const gizmoArrows = ["X", "Y", "Z"].map(() => makeArrow(0.05));
-	const gizmoText = ["X", "Y", "Z"].map(() => makeLabel());
-	gizmoScene.add(...gizmoArrows, ...gizmoText);
+	const cornerScene = new Scene();
+	const cornerCamera = new PerspectiveCamera(40, 1, 0.1, 20);
+	const cornerArrows = ["X", "Y", "Z"].map(() => makeArrow(0.05));
+	const cornerText = ["X", "Y", "Z"].map(() => makeLabel());
+	cornerScene.add(...cornerArrows, ...cornerText);
 
 	/* ---- colours, from the CSS tokens ---- */
 	let colours = null;
@@ -234,12 +282,14 @@ onMount(() => {
 		grid.position.y = -2.5;
 		scene.add(grid);
 		colourAircraft(aircraft, colours);
-		for (const g of ghostPool) colourAircraft(g.plane, colours, true);
+		for (const gh of ghostPool) colourAircraft(gh.plane, colours, true);
 		trailPool.good.lines.material.color.set(colours.good);
 		trailPool.bad.lines.material.color.set(colours.bad);
-		for (const part of [axisPlus.userData.material, arcHead.userData.material]) part.color.set(colours.muted);
+		for (const m of [axisPlus.userData.material, arcHead.userData.material]) m.color.set(colours.muted);
 		axisMinus.material.color.set(colours.muted);
-		arc.material.color.set(colours.muted);
+		axisTip.material.color.set(colours.nose);
+		arcRing.material.color.set(colours.muted);
+		arcSweep.material.color.set(colours.nose);
 		targetDot.material.color.set(colours.target);
 		sightLine.material.color.set(colours.target);
 		bullet.material.color.set(colours.nose);
@@ -251,20 +301,25 @@ onMount(() => {
 		appliedEngine = engine;
 		const letters = ENGINE_AXES[engine];
 		for (const key of Object.keys(LOCAL)) {
-			localArrows[key].userData.material.color.set(colourOf(letters[key]));
+			const c = colourOf(letters[key]);
+			localArrows[key].userData.material.color.set(c);
+			gizmoRings[key].material.color.set(c);
+			gizmoPicks[key].material.color.set(c);
 		}
 		for (const [ring, semantic] of Object.entries(SEMANTIC)) {
 			const c = colourOf(letters[semantic]);
 			rings[ring].material.color.set(c);
-			ringAxes[ring].userData.material.color.set(c);
+			ringPicks[ring].material.color.set(c);
+			ringAxisArrows[ring].userData.material.color.set(c);
 		}
+		arcPick.material.color.set(colours.nose);
 		["X", "Y", "Z"].forEach((letter, i) => {
 			const unit = [0, 0, 0];
 			unit[i] = 1;
 			const dir = displayVec(engine, unit);
-			setArrow(gizmoArrows[i], dir, 0.85);
-			gizmoArrows[i].userData.material.color.set(colours[letter.toLowerCase()]);
-			gizmoText[i].position.set(...scale3(dir, 1.05));
+			setArrow(cornerArrows[i], dir, 0.85);
+			cornerArrows[i].userData.material.color.set(colours[letter.toLowerCase()]);
+			cornerText[i].position.set(...scale3(dir, 1.05));
 		});
 		appliedLabels = null;
 	}
@@ -282,7 +337,7 @@ onMount(() => {
 			setLabel(ringLabels[ring], `${labels[ring]} (${letter.slice(-1)})`, letterColour(letter));
 		}
 		["X", "Y", "Z"].forEach((letter, i) => {
-			setLabel(gizmoText[i], letter, letter.toLowerCase());
+			setLabel(cornerText[i], letter, letter.toLowerCase());
 		});
 		setLabel(targetLabel, labels.target, "target");
 		setLabel(axisLabel, labels.axis, "quiet");
@@ -293,6 +348,8 @@ onMount(() => {
 	let appliedTrails = null;
 	let appliedAxis = null;
 	let appliedTarget = null;
+	let currentRingAxes = null;
+	let axisNow = [0, 1, 0];
 
 	function sync(time) {
 		if (engine !== appliedEngine) applyEngine();
@@ -320,31 +377,33 @@ onMount(() => {
 			ringHolders.yaw.quaternion.set(...qYaw);
 			ringHolders.pitch.quaternion.set(...qYaw);
 			ringHolders.roll.quaternion.set(...qYawPitch);
-			const axes = {
-				yaw: [0, 1, 0],
-				pitch: rotate(qYaw, [1, 0, 0]),
-				roll: rotate(qYawPitch, [0, 0, -1]),
-			};
+			currentRingAxes = ringAxes(gimbal);
 			for (const key of Object.keys(RINGS)) {
-				setArrow(ringAxes[key], axes[key], RINGS[key] + 0.3);
-				ringLabels[key].position.set(...scale3(axes[key], RINGS[key] + 0.55));
+				setArrow(ringAxisArrows[key], currentRingAxes[key], RINGS[key] + 0.3);
+				ringLabels[key].position.set(...scale3(currentRingAxes[key], RINGS[key] + 0.42));
 			}
 		}
 
-		ghostPool.forEach((g, i) => {
+		gizmoGroup.visible = Boolean(gizmo);
+		if (gizmo) {
+			if (gizmo.space === "local") gizmoGroup.quaternion.set(...normalize(q));
+			else gizmoGroup.quaternion.set(0, 0, 0, 1);
+		}
+
+		ghostPool.forEach((gh, i) => {
 			const ghost = ghosts[i];
-			g.plane.visible = Boolean(ghost);
-			g.label.visible = Boolean(ghost);
+			gh.plane.visible = Boolean(ghost);
+			gh.label.visible = Boolean(ghost);
 			if (ghost) {
-				g.plane.quaternion.set(...normalize(ghost.q));
-				setLabel(g.label, ghost.label, "quiet");
+				gh.plane.quaternion.set(...normalize(ghost.q));
+				setLabel(gh.label, ghost.label, "quiet");
 			}
 		});
 
 		if (trails !== appliedTrails) {
 			appliedTrails = trails;
 			for (const kind of ["good", "bad"]) {
-				const trail = trails.find((t) => (kind === "good") === t.good);
+				const trail = trails.find((tr) => (kind === "good") === tr.good);
 				const slot = trailPool[kind];
 				setPolylines(slot.lines, trail ? [trail.points] : []);
 				slot.label.visible = Boolean(trail);
@@ -359,25 +418,31 @@ onMount(() => {
 		if (axisArrow && axisArrow !== appliedAxis) {
 			appliedAxis = axisArrow;
 			const axis = normalize3(axisArrow.axis) ?? [0, 1, 0];
-			setArrow(axisPlus, axis, 2.5);
-			setPolylines(axisMinus, [[[0, 0, 0], scale3(axis, -2.5)]]);
-			axisLabel.position.set(...scale3(axis, 2.75));
-			// The positive direction of turn, by the right-hand rule, drawn as
-			// an arc around the axis near its tip.
+			axisNow = axis;
+			setArrow(axisPlus, axis, AXIS_LENGTH);
+			setPolylines(axisMinus, [[[0, 0, 0], scale3(axis, -AXIS_LENGTH)]]);
+			axisTip.position.set(...scale3(axis, AXIS_LENGTH));
+			axisTipPick.position.set(...scale3(axis, AXIS_LENGTH));
+			axisLabel.position.set(...scale3(axis, AXIS_LENGTH + 0.3));
+			// The θ ring sits around the axis; the orange sweep on it shows the
+			// turn, and its arrowhead the positive direction (right-hand rule).
+			const centre = scale3(axis, ARC.at);
+			arcHolder.position.set(...centre);
+			const from = new Vector3(0, 0, 1);
+			arcHolder.quaternion.setFromUnitVectors(from, new Vector3(...axis));
 			const helper = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
 			const u = normalize3(cross(axis, helper));
 			const v = cross(axis, u);
-			const centre = scale3(axis, 1.9);
-			const sweep = Math.min(330, Math.max(20, axisArrow.angle % 360 || 360)) * DEG;
-			const at = (t) => add3(centre, add3(scale3(u, 0.5 * Math.cos(t)), scale3(v, 0.5 * Math.sin(t))));
+			const sweep = Math.min(355, Math.max(1, axisArrow.angle % 360 || 360)) * DEG;
+			const at = (s) => add3(centre, add3(scale3(u, ARC.radius * Math.cos(s)), scale3(v, ARC.radius * Math.sin(s))));
 			const points = [];
-			for (let i = 0; i <= 40; i++) points.push(at((i / 40) * sweep));
-			setPolylines(arc, [points]);
+			for (let i = 0; i <= 48; i++) points.push(at((i / 48) * sweep));
+			setPolylines(arcSweep, [points]);
 			const end = at(sweep);
 			const tangent = add3(scale3(u, -Math.sin(sweep)), scale3(v, Math.cos(sweep)));
 			arcHead.position.set(...end);
-			setArrow(arcHead, tangent, 0.2);
-			arcLabel.position.set(...add3(centre, scale3(u, 0.95)));
+			setArrow(arcHead, tangent, 0.22);
+			arcLabel.position.set(...add3(centre, scale3(u, ARC.radius + 0.45)));
 		}
 		if (axisArrow) setLabel(arcLabel, axisArrow.label, "quiet");
 
@@ -407,12 +472,26 @@ onMount(() => {
 			const s = reducedMotion ? 1 : (time / 1300) % 1;
 			bullet.position.set(...scale3(dir, 0.9 + s * 1.9));
 		}
+
+		// Aligned with the 4D view: follow its camera unless we are the one
+		// being orbited. Damping would keep moving after the drag ends and
+		// drift the pair apart, so it is off while aligned.
+		controls.enableDamping = !reducedMotion && !alignDir;
+		if (alignDir && !orbiting) {
+			const offset = camera.position.clone().sub(controls.target);
+			const want = new Vector3(...alignDir);
+			if (offset.clone().normalize().distanceTo(want) > 1e-4) {
+				camera.position.copy(controls.target).addScaledVector(want, offset.length());
+				camera.lookAt(controls.target);
+			}
+		}
 	}
 
 	/* ---- picking and dragging ---- */
 	const raycaster = new Raycaster();
 	const pointer = new Vector2();
 	let drag = null;
+	let hovered = null;
 
 	function aim(event) {
 		const rect = canvas.getBoundingClientRect();
@@ -423,11 +502,53 @@ onMount(() => {
 		raycaster.setFromCamera(pointer, camera);
 	}
 
+	// The raycaster tests hidden objects too, so visibility is checked here.
+	const shown = (node) => {
+		for (let n = node; n; n = n.parent) if (!n.visible) return false;
+		return true;
+	};
+
+	function candidates() {
+		const list = [];
+		if (gimbal) list.push(...Object.values(ringPicks));
+		if (gizmo) list.push(...Object.values(gizmoPicks));
+		if (axisArrow) list.push(axisTipPick, arcPick);
+		if (target) list.push(targetPick);
+		if (dragObject) list.push(aircraft);
+		return list;
+	}
+
+	/** The nearest draggable thing under the pointer, with where it was hit. */
 	function pick(event) {
 		aim(event);
-		if (target && raycaster.intersectObject(targetPick, false).length) return "target";
-		if (dragObject && raycaster.intersectObject(aircraft, true).length) return "object";
+		for (const hit of raycaster.intersectObjects(candidates(), true)) {
+			if (!shown(hit.object)) continue;
+			let node = hit.object;
+			while (node && !node.userData.pick) node = node.parent;
+			if (node) return { ...node.userData.pick, node, point: hit.point.toArray() };
+		}
 		return null;
+	}
+
+	function setHover(next) {
+		if (hovered === next) return;
+		if (hovered?.material?.transparent) hovered.material.opacity = 0;
+		hovered = next;
+		if (hovered?.material?.transparent) hovered.material.opacity = 0.28;
+	}
+
+	const size = () => ({ width: canvas.clientWidth, height: canvas.clientHeight });
+
+	function ringInfo(hit) {
+		if (hit.kind === "ring") {
+			return { centre: [0, 0, 0], axis: currentRingAxes[hit.name], radius: RINGS[hit.name] };
+		}
+		if (hit.kind === "gizmo") {
+			const local = LOCAL[hit.name];
+			const axis = gizmo.space === "local" ? rotate(normalize(q), local) : local;
+			return { centre: [0, 0, 0], axis, radius: GIZMO_RADIUS };
+		}
+		return { centre: scale3(axisNow, ARC.at), axis: axisNow, radius: ARC.radius };
 	}
 
 	function down(event) {
@@ -436,7 +557,13 @@ onMount(() => {
 		if (!hit) return; // OrbitControls takes it
 		event.stopPropagation();
 		event.preventDefault();
-		drag = { kind: hit, x: event.clientX, y: event.clientY };
+		drag = { ...hit, x: event.clientX, y: event.clientY };
+		if (hit.kind === "ring" || hit.kind === "gizmo" || hit.kind === "angle") {
+			const info = ringInfo(hit);
+			drag.measure = ringDragger(camera, size(), info.centre, info.axis, info.radius, hit.point);
+			if (hit.kind === "gizmo") ongizmo?.(hit.name, 0, "start");
+		}
+		setHover(hit.node.material?.transparent ? hit.node : null);
 		controls.enabled = false;
 		host.setPointerCapture(event.pointerId);
 		host.style.cursor = "grabbing";
@@ -445,35 +572,51 @@ onMount(() => {
 
 	const plane = new Plane();
 	const hitPoint = new Vector3();
+	const sphere = new Sphere(new Vector3(), AXIS_LENGTH);
 	const camRight = new Vector3();
 	const camUp = new Vector3();
 
 	function move(event) {
 		if (!drag) {
-			host.style.cursor = pick(event) ? "grab" : "";
+			const hit = pick(event);
+			setHover(hit?.node.material?.transparent ? hit.node : null);
+			host.style.cursor = hit ? "grab" : "";
+			return;
+		}
+		const dx = event.clientX - drag.x;
+		const dy = event.clientY - drag.y;
+		drag.x = event.clientX;
+		drag.y = event.clientY;
+		if (drag.measure) {
+			const deg = drag.measure(dx, dy);
+			if (drag.kind === "ring") onring?.(drag.name, deg);
+			else if (drag.kind === "gizmo") ongizmo?.(drag.name, deg, "move");
+			else onangle?.(deg);
 			return;
 		}
 		if (drag.kind === "object") {
-			const dx = event.clientX - drag.x;
-			const dy = event.clientY - drag.y;
-			drag.x = event.clientX;
-			drag.y = event.clientY;
 			camRight.setFromMatrixColumn(camera.matrixWorld, 0);
 			camUp.setFromMatrixColumn(camera.matrixWorld, 1);
 			const k = 0.011;
-			onturn?.(
-				mul(
-					fromAxisAngle(camUp.toArray(), dx * k),
-					fromAxisAngle(camRight.toArray(), dy * k),
-				),
-			);
-		} else {
-			aim(event);
-			const normal = camera.getWorldDirection(new Vector3());
-			plane.setFromNormalAndCoplanarPoint(normal, targetDot.position);
-			if (raycaster.ray.intersectPlane(plane, hitPoint)) {
-				ontarget?.(hitPoint.toArray().map((c) => Math.max(-4.5, Math.min(4.5, c))));
+			onturn?.(mul(fromAxisAngle(camUp.toArray(), dx * k), fromAxisAngle(camRight.toArray(), dy * k)));
+			return;
+		}
+		aim(event);
+		if (drag.kind === "axis") {
+			// Slide the tip over the sphere it lives on; off the sphere, fall
+			// back to a plane facing the camera through the tip.
+			if (!raycaster.ray.intersectSphere(sphere, hitPoint)) {
+				plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new Vector3()), axisTip.position);
+				if (!raycaster.ray.intersectPlane(plane, hitPoint)) return;
 			}
+			const axis = normalize3(hitPoint.toArray());
+			if (axis) onaxis?.(axis);
+			return;
+		}
+		// target
+		plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new Vector3()), targetDot.position);
+		if (raycaster.ray.intersectPlane(plane, hitPoint)) {
+			ontarget?.(hitPoint.toArray().map((c) => Math.max(-4.5, Math.min(4.5, c))));
 		}
 	}
 
@@ -489,8 +632,23 @@ onMount(() => {
 	host.addEventListener("pointermove", move);
 	host.addEventListener("pointerup", up);
 	host.addEventListener("pointercancel", up);
+	host.addEventListener("pointerleave", () => !drag && setHover(null));
 	const keys = (event) => onkeydown?.(event);
 	canvas.addEventListener("keydown", keys);
+
+	/* ---- orbiting, reported when aligned ---- */
+	let orbiting = false;
+	controls.addEventListener("start", () => {
+		orbiting = true;
+	});
+	controls.addEventListener("end", () => {
+		orbiting = false;
+	});
+	controls.addEventListener("change", () => {
+		if (orbiting && alignDir) {
+			onview?.(camera.position.clone().sub(controls.target).normalize().toArray());
+		}
+	});
 
 	/* ---- size ---- */
 	let width = 1;
@@ -512,9 +670,9 @@ onMount(() => {
 	const loop = (time) => {
 		sync(time);
 		controls.update();
-		gizmoCamera.position.copy(camera.position).sub(controls.target).setLength(3.4);
-		gizmoCamera.up.copy(camera.up);
-		gizmoCamera.lookAt(0, 0, 0);
+		cornerCamera.position.copy(camera.position).sub(controls.target).setLength(3.4);
+		cornerCamera.up.copy(camera.up);
+		cornerCamera.lookAt(0, 0, 0);
 
 		renderer.setScissorTest(false);
 		renderer.setViewport(0, 0, width, height);
@@ -524,9 +682,9 @@ onMount(() => {
 		renderer.setScissorTest(true);
 		renderer.setScissor(8, 8, GIZMO, GIZMO);
 		renderer.setViewport(8, 8, GIZMO, GIZMO);
-		renderer.render(gizmoScene, gizmoCamera);
+		renderer.render(cornerScene, cornerCamera);
 		renderer.setScissorTest(false);
-		gizmoLabels.render(gizmoScene, gizmoCamera);
+		gizmoLabels.render(cornerScene, cornerCamera);
 
 		frame = requestAnimationFrame(loop);
 	};
@@ -549,7 +707,7 @@ onMount(() => {
 		canvas.removeEventListener("keydown", keys);
 		controls.dispose();
 		disposeTree(scene);
-		disposeTree(gizmoScene);
+		disposeTree(cornerScene);
 		renderer.dispose();
 		canvas.remove();
 		labelRenderer.domElement.remove();
@@ -614,11 +772,11 @@ $effect(() => {
 	.gizmo-caption {
 		position: absolute;
 		left: 12px;
-		/* Clear of the gizmo's own labels, which can sit just above its box. */
+		/* Clear of the corner gizmo's own labels, which can sit above its box. */
 		bottom: calc(96px + 24px);
 		font-size: 0.72rem;
-		color: var(--muted);
-		background: color-mix(in srgb, var(--surface) 80%, transparent);
+		color: var(--text-secondary);
+		background: var(--glass-bg);
 		border-radius: 4px;
 		padding: 0 4px;
 		pointer-events: none;
@@ -631,6 +789,6 @@ $effect(() => {
 		display: grid;
 		place-items: center;
 		text-align: center;
-		color: var(--text);
+		color: var(--text-primary);
 	}
 </style>

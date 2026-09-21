@@ -325,8 +325,45 @@ export function greatCircle(a, b, samples = 160) {
 	return out;
 }
 
+/**
+ * Inverse of `stereographic`: a point in the projected space back to the unit
+ * quaternion it came from. Used when the learner drags q in the 4D view.
+ */
+export function fromStereographic([px, py, pz]) {
+	const r2 = px * px + py * py + pz * pz;
+	const k = 2 / (1 + r2);
+	return [px * k, py * k, pz * k, (1 - r2) / (1 + r2)];
+}
+
 /** q^s: the fraction s of the way from the identity to q, along the short arc. */
 export const power = (q, s) => slerp([...IDENTITY], q, s);
+
+/* ---------------------------------------------------------- gimbal rings */
+
+/**
+ * The axis each Euler ring turns about, in the display frame, for a pose:
+ * yaw about world up, pitch about the right axis after yaw, roll about the
+ * forward axis after yaw and pitch. Dragging a ring turns about this axis.
+ */
+export function ringAxes({ yaw, pitch }) {
+	const qYaw = fromAxisAngle(Y, -yaw * DEG);
+	const qYawPitch = mul(qYaw, fromAxisAngle(X, pitch * DEG));
+	return {
+		yaw: [...Y],
+		pitch: rotate(qYaw, X),
+		roll: rotate(qYawPitch, [0, 0, -1]),
+	};
+}
+
+/**
+ * A drag of `deg` degrees around a ring's axis (right-hand rule) as a change
+ * to that ring's semantic angle. Yaw is the odd one out: + yaw turns RIGHT,
+ * which is clockwise about world up, so the sign flips.
+ */
+export const ringToAngle = (kind, deg) => (kind === "yaw" ? -deg : deg);
+
+/** The same for the object's own axes (the basis tab's gizmo rings). */
+export const RING_OF_AXIS = { right: "pitch", up: "yaw", forward: "roll" };
 
 /* ------------------------------------------------------------------ engines */
 

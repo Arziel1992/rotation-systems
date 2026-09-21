@@ -8,8 +8,15 @@
  *   every 180° turn      the unit sphere (w = 0)
  *   -1 (a 360° turn)     infinity - the same orientation as 1, a different point
  *
- * With `motion` set, it also shows what multiplying by q does to the whole
- * hypersphere: six reference circles carried along by q^s.
+ * Drawn in the SCENE's frame, not an engine's: q's point then lies along the
+ * same direction as the turn's axis in the aircraft view (right-hand rule),
+ * which is what makes the two views line up when their cameras are aligned.
+ * The axes wear the same colours as the aircraft's own axes for the chosen
+ * engine.
+ *
+ * q can be dragged: the point moves, and the aircraft turns to match.
+ * With `motion` set, six reference circles show what multiplying by q^s does
+ * to the whole hypersphere.
  */
 import { onMount } from "svelte";
 import {
@@ -17,14 +24,20 @@ import {
 	Mesh,
 	MeshBasicMaterial,
 	PerspectiveCamera,
+	Plane,
+	Raycaster,
 	Scene,
 	SphereGeometry,
+	Vector2,
+	Vector3,
 	WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import {
 	DEG,
+	ENGINE_AXES,
+	fromStereographic,
 	greatCircle,
 	len3,
 	mul,
@@ -38,6 +51,7 @@ import {
 import {
 	disposeTree,
 	fitCamera,
+	letterColour,
 	makeArrow,
 	makeDot,
 	makeLabel,
@@ -50,12 +64,16 @@ import {
 
 let {
 	q,
+	engine,
 	paths = [],
 	motion = null,
 	reducedMotion = false,
+	alignDir = null,
 	labels,
 	ariaLabel,
 	describedBy,
+	onq,
+	onview,
 } = $props();
 
 let host;
@@ -69,10 +87,17 @@ const project = (p) => {
 	return s && len3(s) < CLIP ? s : null;
 };
 
+// The scene's axes, and which semantic direction each one is.
+const AXES = [
+	{ dir: [1, 0, 0], name: "right", semantic: "right" },
+	{ dir: [0, 1, 0], name: "up", semantic: "up" },
+	{ dir: [0, 0, 1], name: "back", semantic: "forward" },
+];
+
 const REFERENCE = [
-	{ key: "x", a: [0, 0, 0, 1], b: [1, 0, 0, 0] },
-	{ key: "y", a: [0, 0, 0, 1], b: [0, 1, 0, 0] },
-	{ key: "z", a: [0, 0, 0, 1], b: [0, 0, 1, 0] },
+	{ key: 0, a: [0, 0, 0, 1], b: [1, 0, 0, 0] },
+	{ key: 1, a: [0, 0, 0, 1], b: [0, 1, 0, 0] },
+	{ key: 2, a: [0, 0, 0, 1], b: [0, 0, 1, 0] },
 	{ key: "sphere", a: [1, 0, 0, 0], b: [0, 1, 0, 0] },
 	{ key: "sphere", a: [0, 1, 0, 0], b: [0, 0, 1, 0] },
 	{ key: "sphere", a: [0, 0, 1, 0], b: [1, 0, 0, 0] },
@@ -97,7 +122,7 @@ onMount(() => {
 
 	const scene = new Scene();
 	const camera = new PerspectiveCamera(40, 1, 0.05, 100);
-	camera.position.set(3.4, 2.5, 4.5);
+	camera.position.set(...scale3(normalize3([6.3, 3.8, 5.6]), 6.2));
 	const controls = new OrbitControls(camera, canvas);
 	controls.enablePan = false;
 	controls.enableDamping = !reducedMotion;
@@ -119,22 +144,22 @@ onMount(() => {
 	sphereLabel.position.set(0.1, 1.12, 0);
 	scene.add(sphere, sphereLabel);
 
-	const axes = ["x", "y", "z"].map((key, i) => {
+	const axes = AXES.map((axis) => {
 		const arrow = makeArrow(0.012);
-		const dir = [0, 0, 0];
-		dir[i] = 1;
-		setArrow(arrow, dir, 1.55);
-		const label = makeLabel(key);
-		label.position.set(...scale3(dir, 1.72));
+		setArrow(arrow, axis.dir, 1.55);
+		const label = makeLabel();
+		label.position.set(...scale3(axis.dir, 1.72));
 		scene.add(arrow, label);
-		return { key, arrow, label };
+		return { ...axis, arrow, label };
 	});
 
 	const origin = makeDot(0.045);
 	const originLabel = makeLabel("quiet");
 	originLabel.center.set(1.08, 1.2);
 	origin.add(originLabel);
-	const qDot = makeDot(0.07);
+	const qDot = makeDot(0.08);
+	const qPick = makeDot(0.28);
+	qPick.material = new MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 	const qLabel = makeLabel();
 	qLabel.center.set(-0.1, 1.2);
 	qDot.add(qLabel);
@@ -142,7 +167,7 @@ onMount(() => {
 	const minusLabel = makeLabel("quiet");
 	minusLabel.center.set(-0.1, 1.2);
 	minusDot.add(minusLabel);
-	scene.add(origin, qDot, minusDot);
+	scene.add(origin, qDot, qPick, minusDot);
 
 	const axisLine = track(makeLines(1.8, true));
 	const ticks = [90, 180, 270].map((deg) => {
@@ -160,28 +185,40 @@ onMount(() => {
 	scene.add(pathLines.good, pathLines.bad);
 
 	const circleLines = {
-		x: track(makeLines(2.5)),
-		y: track(makeLines(2.5)),
-		z: track(makeLines(2.5)),
+		0: track(makeLines(2.5)),
+		1: track(makeLines(2.5)),
+		2: track(makeLines(2.5)),
 		sphere: track(makeLines(2)),
 	};
 	scene.add(...Object.values(circleLines));
 
 	let colours;
+	let appliedEngine = null;
 	function applyColours() {
 		colours = readColours(host);
 		scene.background = new Color(colours.view);
 		sphere.material.color.set(colours.muted);
-		for (const a of axes) a.arrow.userData.material.color.set(colours[a.key]);
 		origin.material.color.set(colours.muted);
 		qDot.material.color.set(colours.nose);
+		qPick.material.color.set(colours.nose);
 		minusDot.material.color.set(colours.ghost);
 		axisLine.material.color.set(colours.muted);
-		for (const t of ticks) t.dot.material.color.set(colours.muted);
+		for (const tk of ticks) tk.dot.material.color.set(colours.muted);
 		pathLines.good.material.color.set(colours.good);
 		pathLines.bad.material.color.set(colours.bad);
-		for (const key of ["x", "y", "z"]) circleLines[key].material.color.set(colours[key]);
 		circleLines.sphere.material.color.set(colours.muted);
+		appliedEngine = null;
+	}
+
+	/** The same colour each direction wears in the aircraft view. */
+	function applyEngine() {
+		appliedEngine = engine;
+		axes.forEach((axis, i) => {
+			const c = colours[letterColour(ENGINE_AXES[engine][axis.semantic])];
+			axis.arrow.userData.material.color.set(c);
+			circleLines[i].material.color.set(c);
+		});
+		appliedLabels = null;
 	}
 
 	let appliedLabels = null;
@@ -190,13 +227,16 @@ onMount(() => {
 	let appliedMotion = null;
 
 	function sync() {
+		if (engine !== appliedEngine) applyEngine();
 		if (labels !== appliedLabels) {
 			appliedLabels = labels;
 			setLabel(sphereLabel, labels.sphere, "quiet");
 			setLabel(originLabel, labels.identity, "quiet");
 			setLabel(qLabel, labels.q);
 			setLabel(minusLabel, labels.minusQ, "quiet");
-			for (const a of axes) setLabel(a.label, a.key, a.key);
+			for (const axis of axes) {
+				setLabel(axis.label, labels[axis.name], letterColour(ENGINE_AXES[engine][axis.semantic]));
+			}
 		}
 
 		const unit = normalize(q);
@@ -205,7 +245,10 @@ onMount(() => {
 			appliedQ = qKey;
 			const p = stereographic(unit);
 			qDot.visible = Boolean(p && len3(p) < CLIP);
-			if (qDot.visible) qDot.position.set(...p);
+			if (qDot.visible) {
+				qDot.position.set(...p);
+				qPick.position.set(...p);
+			}
 			const m = stereographic(neg(unit));
 			minusDot.visible = Boolean(m && len3(m) < CLIP);
 			if (minusDot.visible) minusDot.position.set(...m);
@@ -215,10 +258,10 @@ onMount(() => {
 			// about that axis sits at tan(θ/4), for every θ in (0°, 360°).
 			const axis = normalize3(unit.slice(0, 3));
 			axisLine.visible = Boolean(axis);
-			for (const t of ticks) t.dot.visible = Boolean(axis);
+			for (const tk of ticks) tk.dot.visible = Boolean(axis);
 			if (axis) {
 				setPolylines(axisLine, [[scale3(axis, -CLIP), scale3(axis, CLIP)]]);
-				for (const t of ticks) t.dot.position.set(...scale3(axis, Math.tan((t.deg / 4) * DEG)));
+				for (const tk of ticks) tk.dot.position.set(...scale3(axis, Math.tan((tk.deg / 4) * DEG)));
 			}
 		}
 
@@ -236,12 +279,95 @@ onMount(() => {
 			const by = motion === null ? null : power(unit, motion);
 			for (const key of Object.keys(circleLines)) {
 				const circles = by
-					? REFERENCE.filter((r) => r.key === key).map((r) => r.points.map((p) => project(mul(by, p))))
+					? REFERENCE.filter((r) => String(r.key) === key).map((r) => r.points.map((p) => project(mul(by, p))))
 					: [];
 				setPolylines(circleLines[key], circles);
 			}
 		}
+
+		controls.enableDamping = !reducedMotion && !alignDir;
+		if (alignDir && !orbiting) {
+			const offset = camera.position.clone().sub(controls.target);
+			const want = new Vector3(...alignDir);
+			if (offset.clone().normalize().distanceTo(want) > 1e-4) {
+				camera.position.copy(controls.target).addScaledVector(want, offset.length());
+				camera.lookAt(controls.target);
+			}
+		}
 	}
+
+	/* ---- dragging q ---- */
+	const raycaster = new Raycaster();
+	const pointer = new Vector2();
+	const plane = new Plane();
+	const hit = new Vector3();
+	let dragging = false;
+
+	function aim(event) {
+		const rect = canvas.getBoundingClientRect();
+		pointer.set(
+			((event.clientX - rect.left) / rect.width) * 2 - 1,
+			-((event.clientY - rect.top) / rect.height) * 2 + 1,
+		);
+		raycaster.setFromCamera(pointer, camera);
+	}
+
+	const overQ = (event) => {
+		aim(event);
+		return qDot.visible && raycaster.intersectObject(qPick, false).length > 0;
+	};
+
+	function down(event) {
+		if (event.button !== 0 || event.target !== canvas || !overQ(event)) return;
+		event.stopPropagation();
+		event.preventDefault();
+		dragging = true;
+		controls.enabled = false;
+		host.setPointerCapture(event.pointerId);
+		host.style.cursor = "grabbing";
+	}
+
+	function move(event) {
+		if (!dragging) {
+			const over = overQ(event);
+			host.style.cursor = over ? "grab" : "";
+			qPick.material.opacity = over ? 0.25 : 0;
+			return;
+		}
+		aim(event);
+		plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new Vector3()), qDot.position);
+		if (!raycaster.ray.intersectPlane(plane, hit)) return;
+		const p = hit.toArray();
+		const r = len3(p);
+		const limited = r > CLIP * 0.9 ? scale3(p, (CLIP * 0.9) / r) : p;
+		onq?.(fromStereographic(limited));
+	}
+
+	function up(event) {
+		if (!dragging) return;
+		dragging = false;
+		controls.enabled = true;
+		host.style.cursor = "";
+		if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+	}
+
+	host.addEventListener("pointerdown", down, { capture: true });
+	host.addEventListener("pointermove", move);
+	host.addEventListener("pointerup", up);
+	host.addEventListener("pointercancel", up);
+
+	let orbiting = false;
+	controls.addEventListener("start", () => {
+		orbiting = true;
+	});
+	controls.addEventListener("end", () => {
+		orbiting = false;
+	});
+	controls.addEventListener("change", () => {
+		if (orbiting && alignDir) {
+			onview?.(camera.position.clone().sub(controls.target).normalize().toArray());
+		}
+	});
 
 	let width = 1;
 	let height = 1;
@@ -252,7 +378,9 @@ onMount(() => {
 		labelRenderer.setSize(width, height);
 		camera.aspect = width / height;
 		camera.updateProjectionMatrix();
-		fitCamera(camera, controls, frameDistance, 1.3);
+		// The unit sphere is what matters here, not the clip radius, so a
+		// half-width view needs far less backing off than the aircraft view.
+		fitCamera(camera, controls, frameDistance, 0.8);
 		for (const m of lineMaterials) m.resolution.set(width, height);
 	});
 	observer.observe(host);
@@ -274,6 +402,10 @@ onMount(() => {
 		cancelAnimationFrame(frame);
 		observer.disconnect();
 		themeWatch.disconnect();
+		host.removeEventListener("pointerdown", down, { capture: true });
+		host.removeEventListener("pointermove", move);
+		host.removeEventListener("pointerup", up);
+		host.removeEventListener("pointercancel", up);
 		controls.dispose();
 		disposeTree(scene);
 		renderer.dispose();

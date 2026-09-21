@@ -2,23 +2,30 @@
 /**
  * Rotation Systems — the shell and the owner of all state.
  *
- * One orientation, `q`, shared by every tab and held in the display frame
- * (see rotation.js). Each tab is a different way of SETTING it - three angles,
- * an axis and an angle, turns about the object's own axes, or a direction to
- * look along - and the code panel writes the same pose in the chosen engine.
+ * One orientation, `q`, shared by every method and held in the display frame
+ * (see rotation.js). Each method is a different way of SETTING it - three
+ * angles, an axis and an angle, turns about the object's own axes, or a
+ * direction to look along - and the code panel writes the same pose in the
+ * chosen engine. Everything the learner can drag (the aircraft, the gimbal
+ * rings, the basis gizmo, the quaternion's axis and angle, q in the 4D view,
+ * the numbers in the code) routes through a handler here.
  *
- * "Break it" scenarios are driven from here: a timed one plays over a few
- * seconds and can be paused and scrubbed; with reduced motion it does not
- * autoplay, and the learner scrubs it instead.
+ * Layout follows the house tools: a textbook rail on the left, the stage in
+ * the middle, controls and a live read-out on the right, both rails
+ * collapsible and remembered.
  */
+import "@fortawesome/fontawesome-free/css/fontawesome.min.css";
+import "@fortawesome/fontawesome-free/css/solid.min.css";
 import { onMount } from "svelte";
 import { version } from "../package.json";
 import CodePanel from "./lib/CodePanel.svelte";
 import Controls from "./lib/Controls.svelte";
+import Glossary from "./lib/Glossary.svelte";
 import Hypersphere from "./lib/Hypersphere.svelte";
 import { LOCALE_NAMES, locale, setLocale, t } from "./lib/i18n/index.svelte.js";
 import Readout from "./lib/Readout.svelte";
 import * as R from "./lib/rotation.js";
+import { scrub } from "./lib/scrub.js";
 import Theory from "./lib/Theory.svelte";
 import Viewport from "./lib/Viewport.svelte";
 
@@ -27,6 +34,8 @@ const POSE = { yaw: 35, pitch: 20, roll: 10 };
 const TARGET = [2, 1, -3];
 /** Scenarios that play over time, and how long each takes, in seconds. */
 const TIMED = { gimbal: 9, longway: 4, apply: 4, slerp: 3, fullpath: 4, overhead: 6 };
+/** Where both 3D cameras start, and share while the views are aligned. */
+const START_VIEW = R.normalize3([6.3, 3.8, 5.6]);
 const reducedMotion =
 	typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -49,37 +58,42 @@ function persist(key, value) {
 
 let method = $state(saved("method", METHODS, "euler"));
 let engine = $state(saved("engine", R.ENGINES, "unity"));
-let theoryOpen = $state(document.documentElement.dataset.theory !== "hidden");
-// Held as state, not read from the DOM in the template, so the button's
-// pressed state re-renders when it changes (a lesson from the trace player).
+// The inline script in index.html has already applied these before paint.
+let leftOpen = $state(document.documentElement.dataset.theory !== "hidden");
+let rightOpen = $state(document.documentElement.dataset.controls !== "hidden");
 let dark = $state(document.documentElement.dataset.theme === "dark");
+let glossaryOpen = $state(false);
+let glossarySection = $state("manual");
 
-/* The one orientation every tab sets. */
+/* The one orientation every method sets. */
 let q = $state(R.fromEuler(POSE));
 
-/* Euler tab */
+/* Euler */
 let euler = $state({ ...POSE });
 let clamp = $state(true);
 let showRings = $state(true);
 let showAxes = $state(true);
 
-/* Quaternion tab. The axis sliders are right / up / forward. */
+/* Quaternion. The axis sliders are right / up / forward. */
 let axisRaw = $state([1, 1, 1]);
 let angle = $state(120);
 let negate = $state(false);
 let slerpA = $state([...R.IDENTITY]);
 let slerpB = $state(R.fromAxisAngle([1, 1, 1], 120 * R.DEG));
 let qLength = $state(1.3);
+let aligned = $state(saved("aligned", ["on", "off"], "on") === "on");
+let viewDir = $state([...START_VIEW]);
 
-/* Basis tab */
+/* Basis */
 let space = $state("local");
 let lastTurn = $state({ kind: "yaw", deg: 15, space: "local" });
 let cols = $state(null);
 let driftRunning = $state(false);
 let orthonormalize = $state(false);
 let fireOwn = $state(false);
+let showGizmo = $state(true);
 
-/* Look-at tab */
+/* Look-at */
 let target = $state([...TARGET]);
 let wanted = $state(null);
 let smooth = $state(false);
@@ -93,6 +107,7 @@ let progress = $state(0);
 let playing = $state(false);
 let announcement = $state("");
 let base = null; // the state a scenario started from; not reactive on purpose
+let dragTurn = null; // the basis gizmo turn being dragged
 
 const axis = $derived(R.normalize3([axisRaw[0], axisRaw[1], -axisRaw[2]]) ?? [0, 1, 0]);
 
@@ -111,7 +126,7 @@ function quatFromTab() {
 	return negate ? R.neg(next) : next;
 }
 
-/** A new orientation from a drag or a key, reflected back into the tab. */
+/** A new orientation from a drag or a key, reflected back into the method. */
 function setOrientation(next) {
 	q = R.normalize(next);
 	if (method === "euler") euler = R.toEuler(q);
@@ -125,39 +140,101 @@ function syncAxisFromQ() {
 	negate = false;
 }
 
-function setEuler(key, value) {
+function setEulerAll(next) {
 	stopScenario();
-	const next = { ...euler, [key]: value };
-	if (clamp) next.pitch = Math.max(-89, Math.min(89, next.pitch));
-	euler = next;
-	q = R.fromEuler(next);
+	const e = { ...next };
+	if (clamp) e.pitch = Math.max(-89, Math.min(89, e.pitch));
+	euler = e;
+	q = R.fromEuler(e);
 }
 
-function setAxis(index, value) {
+const setEuler = (key, value) => setEulerAll({ ...euler, [key]: value });
+
+function setAxisRaw(next) {
 	stopScenario();
-	const next = [...axisRaw];
-	next[index] = value;
 	axisRaw = next;
-	q = quatFromTab();
-}
-
-function axisPreset(raw) {
-	stopScenario();
-	axisRaw = raw;
 	q = quatFromTab();
 }
 
 function setAngle(value) {
 	stopScenario();
-	angle = value;
+	angle = Math.max(0, Math.min(720, value));
 	q = quatFromTab();
 }
 
+const turnStep = (kind, deg) => R.fromEuler({ yaw: 0, pitch: 0, roll: 0, [kind]: deg });
+
 function turn(kind, deg) {
 	stopScenario();
-	const step = R.fromEuler({ yaw: 0, pitch: 0, roll: 0, [kind]: deg });
 	lastTurn = { kind, deg, space };
-	setOrientation(space === "local" ? R.mul(q, step) : R.mul(step, q));
+	setOrientation(space === "local" ? R.mul(q, turnStep(kind, deg)) : R.mul(turnStep(kind, deg), q));
+}
+
+/** Change the size of the last basis turn: undo the old step, apply the new. */
+function retune(nextDeg) {
+	const { kind, deg, space: where } = lastTurn;
+	const undo = R.conj(turnStep(kind, deg));
+	const redo = turnStep(kind, nextDeg);
+	const next = where === "local" ? R.mul(R.mul(q, undo), redo) : R.mul(R.mul(redo, undo), q);
+	lastTurn = { kind, deg: nextDeg, space: where };
+	setOrientation(next);
+}
+
+/* ------------------------------------------------------ direct manipulation */
+
+function onDragTurn(dq) {
+	stopScenario();
+	setOrientation(R.mul(dq, q));
+}
+
+/** A gimbal ring dragged by `deg` about its own axis (right-hand rule). */
+function onRing(kind, deg) {
+	setEuler(kind, euler[kind] + R.ringToAngle(kind, deg));
+}
+
+/** The basis gizmo: one ring per axis of the object (or of the world). */
+function onGizmo(axisName, deg, phase) {
+	const kind = R.RING_OF_AXIS[axisName];
+	if (phase === "start") {
+		stopScenario();
+		dragTurn = { kind, deg: 0 };
+		return;
+	}
+	if (!dragTurn) return;
+	const step = R.ringToAngle(kind, deg);
+	dragTurn.deg += step;
+	lastTurn = { kind, deg: dragTurn.deg, space };
+	setOrientation(space === "local" ? R.mul(q, turnStep(kind, step)) : R.mul(turnStep(kind, step), q));
+}
+
+function onAxisDrag(displayAxis) {
+	setAxisRaw([displayAxis[0], displayAxis[1], -displayAxis[2]]);
+}
+
+function onHyperDrag(next) {
+	stopScenario();
+	setOrientation(next);
+}
+
+/** A number dragged in the code panel, in that engine's printed units. */
+function onScrub(id, delta) {
+	const patch = scrub(
+		{ engine, euler, axisRaw, angle, target, turnRate, progress, lastTurn },
+		id,
+		delta,
+	);
+	if (!patch) return;
+	if (patch.euler) setEulerAll(patch.euler);
+	if (patch.axisRaw) setAxisRaw(patch.axisRaw);
+	if (patch.angle !== undefined) setAngle(patch.angle);
+	if (patch.target) setTarget(patch.target);
+	if (patch.turnRate !== undefined) turnRate = patch.turnRate;
+	if (patch.progress !== undefined) seek(patch.progress);
+	if (patch.turnDeg !== undefined) retune(patch.turnDeg);
+}
+
+function onView(dir) {
+	if (aligned) viewDir = dir;
 }
 
 /* ------------------------------------------------------------- look-at */
@@ -282,6 +359,7 @@ function togglePlay() {
 }
 
 function seek(p) {
+	if (!(active in TIMED)) return;
 	playing = false;
 	applyScenario(p);
 }
@@ -301,15 +379,7 @@ function selectMethod(next) {
 	method = next;
 	persist("method", next);
 	enterMethod();
-}
-
-function onTabKey(event, index) {
-	const moves = { ArrowRight: 1, ArrowLeft: -1, Home: -index, End: METHODS.length - 1 - index };
-	if (!(event.key in moves)) return;
-	event.preventDefault();
-	const next = METHODS[(index + moves[event.key] + METHODS.length) % METHODS.length];
-	selectMethod(next);
-	document.getElementById(`tab-${next}`)?.focus();
+	announce(t("methodChosen", { method: t(`tab.${next}`) }));
 }
 
 function setEngine(next) {
@@ -331,6 +401,7 @@ function reset() {
 		slerpA = [...R.IDENTITY];
 		slerpB = R.fromAxisAngle([1, 1, 1], 120 * R.DEG);
 		q = quatFromTab();
+		viewDir = [...START_VIEW];
 	} else if (method === "basis") {
 		space = "local";
 		lastTurn = { kind: "yaw", deg: 15, space: "local" };
@@ -342,6 +413,11 @@ function reset() {
 		aimAtTarget(true);
 	}
 	announce(t("resetDone"));
+}
+
+function openGlossary(section = "manual") {
+	glossarySection = section;
+	glossaryOpen = true;
 }
 
 /** Keys on the focused 3D view. Shift makes the step bigger. */
@@ -383,9 +459,17 @@ function onViewKey(event) {
 	else turn(action[0], action[1]);
 }
 
-function onDragTurn(dq) {
-	stopScenario();
-	setOrientation(R.mul(dq, q));
+/** Page-wide shortcuts: 1-4 pick a method, G opens the glossary. */
+function onGlobalKey(event) {
+	if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+	// Only text entry swallows these keys (a select jumps between options on
+	// a letter). Range inputs and the code's sliders never use 1-4 or G; the
+	// first version excluded every input, so G did nothing after touching a
+	// slider.
+	if (event.target.closest?.("select, textarea, input[type='text'], input[type='search'], dialog")) return;
+	const index = ["1", "2", "3", "4"].indexOf(event.key);
+	if (index >= 0) selectMethod(METHODS[index]);
+	else if (event.key === "g" || event.key === "G") openGlossary(method === "quat" ? "quaternion" : method === "lookat" ? "look-at" : method);
 }
 
 function toggleTheme() {
@@ -395,11 +479,24 @@ function toggleTheme() {
 	persist("theme", next);
 }
 
-function toggleTheory() {
-	theoryOpen = !theoryOpen;
-	if (theoryOpen) delete document.documentElement.dataset.theory;
+function toggleLeft() {
+	leftOpen = !leftOpen;
+	if (leftOpen) delete document.documentElement.dataset.theory;
 	else document.documentElement.dataset.theory = "hidden";
-	persist("theory", theoryOpen ? "shown" : "hidden");
+	persist("theory", leftOpen ? "shown" : "hidden");
+}
+
+function toggleRight() {
+	rightOpen = !rightOpen;
+	if (rightOpen) delete document.documentElement.dataset.controls;
+	else document.documentElement.dataset.controls = "hidden";
+	persist("controls", rightOpen ? "shown" : "hidden");
+}
+
+function toggleAligned() {
+	aligned = !aligned;
+	persist("aligned", aligned ? "on" : "off");
+	announce(t(aligned ? "alignOn" : "alignOff"));
 }
 
 /* ------------------------------------------------------ derived for views */
@@ -408,8 +505,7 @@ const qShown = $derived(active === "unnormalised" ? q.map((c) => c * qLength) : 
 
 const noseOf = (quat) => R.scale3(R.axesOf(quat).forward, 1.08);
 const nosePath = (at, n = 72) => Array.from({ length: n + 1 }, (_, i) => noseOf(at(i / n)));
-const quatPath = (at, n = 96) =>
-	Array.from({ length: n + 1 }, (_, i) => R.engineQuat(engine, at(i / n)));
+const quatPath = (at, n = 96) => Array.from({ length: n + 1 }, (_, i) => at(i / n));
 
 const longwayAt = (p) => R.fromEuler({ yaw: longwayYaw(p), pitch: 0, roll: 0 });
 const shortwayAt = (p) => R.slerp(longwayAt(0), longwayAt(1), p);
@@ -478,6 +574,7 @@ const viewLabels = $derived({
 	forward: t("axisForward"),
 	right: t("axisRight"),
 	up: t("axisUp"),
+	back: t("axisBack"),
 	yaw: t("yaw"),
 	pitch: t("pitch"),
 	roll: t("roll"),
@@ -492,6 +589,9 @@ const hyperLabels = $derived({
 	identity: t("hyperIdentity"),
 	q: "q",
 	minusQ: t("hyperMinus"),
+	right: t("axisRight"),
+	up: t("axisUp"),
+	back: t("axisBack"),
 	noWebgl: t("noWebgl"),
 });
 
@@ -540,6 +640,7 @@ const codeState = $derived({
 });
 
 const actions = {
+	selectMethod,
 	setEuler,
 	setClamp(on) {
 		if (active === "gimbal") stopScenario();
@@ -548,8 +649,13 @@ const actions = {
 	},
 	setShowRings: (on) => (showRings = on),
 	setShowAxes: (on) => (showAxes = on),
-	setAxis,
-	axisPreset,
+	setShowGizmo: (on) => (showGizmo = on),
+	setAxis(index, value) {
+		const next = [...axisRaw];
+		next[index] = value;
+		setAxisRaw(next);
+	},
+	axisPreset: setAxisRaw,
 	setAngle,
 	setA() {
 		slerpA = [...q];
@@ -560,6 +666,7 @@ const actions = {
 		announce(t("setBdone"));
 	},
 	setQLength: (v) => (qLength = v),
+	toggleAligned,
 	turn,
 	setSpace: (s) => (space = s),
 	setOrthonormalize: (on) => (orthonormalize = on),
@@ -588,6 +695,7 @@ const actions = {
 	togglePlay,
 	seek,
 	reset,
+	glossary: openGlossary,
 };
 
 enterMethod();
@@ -629,248 +737,213 @@ onMount(() => {
 		frame = requestAnimationFrame(tick);
 	};
 	frame = requestAnimationFrame(tick);
+	window.addEventListener("keydown", onGlobalKey);
 
 	if (new URLSearchParams(location.search).has("selftest")) {
 		import("./lib/rotation.selftest.js").then((m) => m.report());
 	}
-	return () => cancelAnimationFrame(frame);
+	return () => {
+		cancelAnimationFrame(frame);
+		window.removeEventListener("keydown", onGlobalKey);
+	};
 });
 </script>
 
 <a class="skip-link" href="#main">{t("skipToContent")}</a>
 
-<header class="topbar">
-	<div class="brand">
-		<h1>{t("title")}</h1>
-		<p class="tagline">{t("tagline")}</p>
-	</div>
-	<div class="toolbar">
-		<button type="button" class="toggle" aria-pressed={theoryOpen} onclick={toggleTheory}>
-			{t("theoryToggle")}
-		</button>
-		<label class="visually-hidden" for="locale">{t("languageLabel")}</label>
-		<select id="locale" value={locale.current} onchange={(event) => setLocale(event.currentTarget.value)}>
-			{#each Object.entries(LOCALE_NAMES) as [code, name] (code)}
-				<option value={code} lang={code}>{name}</option>
-			{/each}
-		</select>
-		<button type="button" class="toggle" aria-pressed={dark} onclick={toggleTheme}>
-			{t("themeToggle")}
-		</button>
-	</div>
-</header>
-
-<div class="methods">
-	<div class="tabs" role="tablist" aria-label={t("methodsLabel")}>
-		{#each METHODS as id, index (id)}
-			<button
-				type="button"
-				role="tab"
-				id="tab-{id}"
-				aria-selected={method === id}
-				aria-controls="stage"
-				tabindex={method === id ? 0 : -1}
-				onclick={() => selectMethod(id)}
-				onkeydown={(event) => onTabKey(event, index)}
-			>
-				{t(`tab.${id}`)}
-			</button>
-		{/each}
-	</div>
-</div>
-
-<main id="main" class="layout" class:no-theory={!theoryOpen}>
-	{#if theoryOpen}
-		<aside class="theory" aria-labelledby="theory-heading">
-			<Theory {method} {engine} />
+<div class="app-layout">
+	{#if leftOpen}
+		<aside class="sidebar-left" aria-labelledby="theory-title">
+			<div class="sidebar-inner">
+				<Theory {method} {engine} onglossary={openGlossary} />
+			</div>
+			<div class="app-footer">
+				{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
+			</div>
 		</aside>
 	{/if}
 
-	<div id="stage" class="stage" role="tabpanel" aria-labelledby="tab-{method}">
-		<div class="views" class:split={method === "quat"}>
-			<div class="view">
-				{#if method === "quat"}<h2 class="view-title">{t("objectTitle")}</h2>{/if}
-				<Viewport
-					{q}
-					cols={viewCols}
-					{engine}
-					{reducedMotion}
-					gimbal={method === "euler" && showRings ? euler : null}
-					{showAxes}
-					{ghosts}
-					{trails}
-					{axisArrow}
-					target={method === "lookat" ? target : null}
-					{rays}
-					dragObject={method !== "lookat"}
-					labels={viewLabels}
-					ariaLabel={viewName}
-					describedBy="view-hint"
-					onturn={onDragTurn}
-					ontarget={setTarget}
-					onkeydown={onViewKey}
-				/>
-				<p id="view-hint" class="hint">
-					{method === "lookat" ? t("viewHintLookat") : t("viewHint")}
+	<main id="main" class="canvas-panel" aria-label={t("stageLabel")}>
+		<!-- The page keeps its h1 when the textbook rail that holds it is closed. -->
+		{#if !leftOpen}<h1 class="visually-hidden">{t("title")}</h1>{/if}
+		<button
+			type="button"
+			class="toggle-btn toggle-left"
+			aria-expanded={leftOpen}
+			aria-label={leftOpen ? t("hideTheory") : t("showTheory")}
+			onclick={toggleLeft}
+		>
+			<i class="fa-solid {leftOpen ? 'fa-chevron-left' : 'fa-chevron-right'}" aria-hidden="true"></i>
+		</button>
+		<button
+			type="button"
+			class="toggle-btn toggle-right"
+			aria-expanded={rightOpen}
+			aria-label={rightOpen ? t("hideControls") : t("showControls")}
+			onclick={toggleRight}
+		>
+			<i class="fa-solid {rightOpen ? 'fa-chevron-right' : 'fa-chevron-left'}" aria-hidden="true"></i>
+		</button>
+
+		<div class="stage">
+			<div class="views" class:split={method === "quat"}>
+				<div class="view">
+					{#if method === "quat"}<h2 class="view-title">{t("objectTitle")}</h2>{/if}
+					<Viewport
+						{q}
+						cols={viewCols}
+						{engine}
+						{reducedMotion}
+						gimbal={method === "euler" && showRings ? euler : null}
+						gizmo={method === "basis" && showGizmo && !active ? { space } : null}
+						{showAxes}
+						{ghosts}
+						{trails}
+						{axisArrow}
+						target={method === "lookat" ? target : null}
+						{rays}
+						dragObject={method !== "lookat"}
+						alignDir={method === "quat" && aligned ? viewDir : null}
+						labels={viewLabels}
+						ariaLabel={viewName}
+						describedBy="view-hint"
+						onturn={onDragTurn}
+						ontarget={setTarget}
+						onring={onRing}
+						ongizmo={onGizmo}
+						onaxis={onAxisDrag}
+						onangle={(deg) => setAngle(angle + deg)}
+						onview={onView}
+						onkeydown={onViewKey}
+					/>
+				</div>
+				{#if method === "quat"}
+					<div class="view">
+						<div class="view-title with-toggle">
+							<h2>{t("hyperTitle")}</h2>
+							<button type="button" class="align" aria-pressed={aligned} onclick={toggleAligned}>
+								<i class="fa-solid fa-link" aria-hidden="true"></i>
+								{t("alignViews")}
+							</button>
+						</div>
+						<Hypersphere
+							q={qShown}
+							{engine}
+							paths={hyperPaths}
+							motion={active === "apply" ? progress : null}
+							{reducedMotion}
+							alignDir={aligned ? viewDir : null}
+							labels={hyperLabels}
+							ariaLabel={t("hyperLabel")}
+							describedBy="hyper-hint"
+							onq={onHyperDrag}
+							onview={onView}
+						/>
+						<p id="hyper-hint" class="view-hint">{t("hyperHint")}</p>
+					</div>
+				{/if}
+
+				<div class="float-toolbar" role="toolbar" aria-label={t("toolbarLabel")}>
+					<button type="button" onclick={() => openGlossary("manual")}>
+						<i class="fa-solid fa-book-open" aria-hidden="true"></i>
+						{t("manualButton")}
+					</button>
+					<label class="visually-hidden" for="locale">{t("languageLabel")}</label>
+					<select id="locale" value={locale.current} onchange={(event) => setLocale(event.currentTarget.value)}>
+						{#each Object.entries(LOCALE_NAMES) as [code, name] (code)}
+							<option value={code} lang={code}>{name}</option>
+						{/each}
+					</select>
+					<button type="button" aria-pressed={dark} onclick={toggleTheme}>
+						<i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+						{t("themeToggle")}
+					</button>
+				</div>
+
+				<p id="view-hint" class="kb-hint">
+					{t(`kbHint.${method}`)}
 				</p>
 			</div>
-			{#if method === "quat"}
-				<div class="view">
-					<h2 class="view-title">{t("hyperTitle")}</h2>
-					<Hypersphere
-						q={R.engineQuat(engine, qShown)}
-						paths={hyperPaths}
-						motion={active === "apply" ? progress : null}
-						{reducedMotion}
-						labels={hyperLabels}
-						ariaLabel={t("hyperLabel")}
-						describedBy="hyper-hint"
-					/>
-					<p id="hyper-hint" class="hint">{t("hyperHint")}</p>
-				</div>
-			{/if}
+			<div class="code">
+				<CodePanel
+					snapshot={codeState}
+					{engine}
+					onengine={setEngine}
+					onannounce={announce}
+					onscrub={onScrub}
+					onglossary={openGlossary}
+				/>
+			</div>
 		</div>
-		<div class="code">
-			<CodePanel state={codeState} {engine} onengine={setEngine} onannounce={announce} />
-		</div>
-	</div>
+	</main>
 
-	<aside class="rail" aria-labelledby="controls-heading">
-		<Controls
-			{method}
-			{engine}
-			{euler}
-			{clamp}
-			{showRings}
-			{showAxes}
-			{axisRaw}
-			{angle}
-			{negate}
-			{qLength}
-			{space}
-			{orthonormalize}
-			{driftRunning}
-			{fireOwn}
-			{target}
-			{smooth}
-			{turnRate}
-			{clampElevation}
-			{active}
-			{progress}
-			{playing}
-			timed={active in TIMED}
-			act={actions}
-		/>
-		<Readout
-			{method}
-			{engine}
-			q={qShown}
-			cols={viewCols}
-			{target}
-			{degenerate}
-			{active}
-		/>
-	</aside>
-</main>
+	{#if rightOpen}
+		<aside class="sidebar-right" aria-labelledby="controls-title">
+			<div class="sidebar-inner">
+				<Controls
+					{method}
+					{engine}
+					{euler}
+					{clamp}
+					{showRings}
+					{showAxes}
+					{showGizmo}
+					{axisRaw}
+					{angle}
+					{negate}
+					{qLength}
+					{aligned}
+					{space}
+					{orthonormalize}
+					{driftRunning}
+					{fireOwn}
+					{target}
+					{smooth}
+					{turnRate}
+					{clampElevation}
+					{active}
+					{progress}
+					{playing}
+					timed={active in TIMED}
+					act={actions}
+				/>
+				<Readout
+					{method}
+					{engine}
+					q={qShown}
+					cols={viewCols}
+					{target}
+					{degenerate}
+					{active}
+					onglossary={openGlossary}
+				/>
+			</div>
+			<div class="app-footer">
+				{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
+				<br />
+				<span class="badge" title={t("versionTitle")}>v{version}</span>
+			</div>
+		</aside>
+	{/if}
+</div>
 
-<footer class="footer">
-	<span>{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer</span>
-	<span class="badge" title={t("versionTitle")}>v{version}</span>
-</footer>
+<Glossary bind:isOpen={glossaryOpen} bind:section={glossarySection} />
 
 <p class="visually-hidden" role="status" aria-live="polite">{announcement}</p>
 
 <style>
-	:global(html),
-	:global(body) {
-		height: 100%;
-	}
-
-	.topbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem 1rem;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.55rem 1rem;
-		background: var(--surface);
-		border-bottom: 1px solid var(--line-soft);
-	}
-
-	h1 {
-		font-size: 1.25rem;
-		margin: 0;
-	}
-
-	.tagline {
-		margin: 0;
-		color: var(--muted);
-		font-size: 0.88rem;
-	}
-
-	.toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		align-items: center;
-	}
-
-	/* Pressed toggles: filled AND a tick, so the state is not colour alone. */
-	.toggle[aria-pressed="true"] {
-		background: var(--accent);
-		color: var(--accent-text);
-		border-color: var(--accent);
-	}
-
-	.toggle[aria-pressed="true"]::before {
-		content: "✓ ";
-	}
-
-	.methods {
-		padding: 0.35rem 1rem 0;
-		background: var(--bg);
-		border-bottom: 1px solid var(--line-soft);
-	}
-
-	.layout {
-		flex: 1;
-		min-height: 0;
-		display: grid;
-		grid-template-columns: minmax(15rem, 21rem) minmax(0, 1fr) minmax(17rem, 23rem);
-	}
-
-	.layout.no-theory {
-		grid-template-columns: minmax(0, 1fr) minmax(17rem, 23rem);
-	}
-
-	.theory,
-	.rail {
-		min-height: 0;
-		overflow-y: auto;
-		background: var(--surface);
-		padding: 1rem;
-	}
-
-	.theory {
-		border-right: 1px solid var(--line-soft);
-	}
-
-	.rail {
-		border-left: 1px solid var(--line-soft);
-	}
-
 	.stage {
-		min-width: 0;
-		min-height: 0;
+		height: 100%;
 		display: grid;
-		grid-template-rows: minmax(16rem, 1fr) minmax(13rem, 42%);
+		grid-template-rows: minmax(16rem, 1fr) minmax(13rem, 40%);
 		/* An explicit column. The implicit one is `auto`, and a code line (pre,
 		   no wrapping) then widens the whole stage past its track - the canvas,
-		   being positioned, was painting over the controls rail. */
+		   being positioned, painted over the controls rail (MISTAKES.md). */
 		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.views {
+		position: relative;
 		min-height: 0;
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
@@ -879,7 +952,7 @@ onMount(() => {
 	.views.split {
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 1px;
-		background: var(--line-soft);
+		background: var(--panel-border);
 	}
 
 	.view {
@@ -890,32 +963,116 @@ onMount(() => {
 
 	.view-title {
 		position: absolute;
-		top: 0.5rem;
-		left: 0.6rem;
+		top: 0.6rem;
+		left: 2.4rem;
 		z-index: 2;
 		margin: 0;
-		font-size: 0.82rem;
-		font-weight: 600;
-		background: color-mix(in srgb, var(--surface) 88%, transparent);
-		border: 1px solid var(--line-soft);
-		border-radius: 6px;
-		padding: 0.1rem 0.5rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		color: var(--text-primary);
+		background: var(--glass-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: 99px;
+		padding: 0.2rem 0.75rem;
 		pointer-events: none;
 	}
 
-	.hint {
-		position: absolute;
-		right: 0.6rem;
-		bottom: 0.6rem;
-		max-width: calc(100% - 9rem);
+	.view-title.with-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		pointer-events: auto;
+		left: 0.6rem;
+		padding-right: 0.3rem;
+	}
+
+	.view-title h2 {
+		font-size: inherit;
 		margin: 0;
-		font-size: 0.75rem;
-		color: var(--muted);
-		background: color-mix(in srgb, var(--surface) 90%, transparent);
-		border: 1px solid var(--line-soft);
-		border-radius: 8px;
-		padding: 0.2rem 0.6rem;
+	}
+
+	.align {
+		border: 1px solid var(--control-border);
+		background: var(--bg-secondary);
+		border-radius: 99px;
+		padding: 0.1rem 0.6rem;
+		font-size: 0.74rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.align[aria-pressed="true"] {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--accent-text);
+	}
+
+	/* Under the 4D view's title: in the split layout the toolbar sits at the
+	   bottom, where this hint used to be covered by it. */
+	.view-hint {
+		position: absolute;
+		left: 0.6rem;
+		right: 0.6rem;
+		top: 2.8rem;
+		margin: 0;
+		font-size: 0.72rem;
+		color: var(--text-secondary);
+		text-align: center;
 		pointer-events: none;
+	}
+
+	.float-toolbar {
+		position: absolute;
+		top: 0.6rem;
+		right: 2.4rem;
+		z-index: 5;
+		display: flex;
+		gap: 0.35rem;
+		align-items: center;
+	}
+
+	.views.split .float-toolbar {
+		top: auto;
+		bottom: 2.4rem;
+	}
+
+	.float-toolbar button,
+	.float-toolbar select {
+		background: var(--glass-bg);
+		backdrop-filter: blur(6px);
+		border: 1px solid var(--control-border);
+		border-radius: 99px;
+		padding: 0.3rem 0.75rem;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.float-toolbar button:hover,
+	.float-toolbar select:hover {
+		border-color: var(--accent);
+	}
+
+	.float-toolbar button[aria-pressed="true"] {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--accent-text);
+	}
+
+	.kb-hint {
+		position: absolute;
+		left: 50%;
+		bottom: 0.7rem;
+		transform: translateX(-50%);
+		z-index: 4;
+		margin: 0;
+		max-width: calc(100% - 9rem);
+		text-align: center;
+		pointer-events: none;
+	}
+
+	.views.split .kb-hint {
+		display: none;
 	}
 
 	.code {
@@ -923,48 +1080,37 @@ onMount(() => {
 		min-width: 0;
 	}
 
-	.footer {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.4rem 1rem;
-		padding: 0.4rem 1rem;
-		font-size: 0.8rem;
-		color: var(--muted);
-		background: var(--surface);
-		border-top: 1px solid var(--line-soft);
+	.sidebar-right .app-footer .badge {
+		margin-top: 0.3rem;
 	}
 
-	/* Desktop: the tool fills the window and each rail scrolls on its own. */
-	@media (min-width: 1100px) {
-		:global(#app) {
-			height: 100vh;
+	@media (max-width: 899px) {
+		.canvas-panel {
+			order: 1;
+			min-height: 0;
 		}
-	}
 
-	/* Narrow: one column, page scrolls. The views keep a usable height. */
-	@media (max-width: 1099px) {
-		.layout,
-		.layout.no-theory {
-			display: flex;
-			flex-direction: column;
+		.sidebar-right {
+			order: 2;
+		}
+
+		.sidebar-left {
+			order: 3;
 		}
 
 		.stage {
-			order: 1;
 			grid-template-rows: auto auto;
 		}
 
 		.views {
-			height: 62vh;
+			height: 64vh;
 			min-height: 20rem;
 		}
 
 		.views.split {
 			grid-template-columns: minmax(0, 1fr);
 			grid-template-rows: 1fr 1fr;
-			height: 110vh;
+			height: 115vh;
 		}
 
 		.code {
@@ -972,16 +1118,14 @@ onMount(() => {
 			min-height: 18rem;
 		}
 
-		.rail {
-			order: 2;
-			border-left: 0;
-			border-top: 1px solid var(--line-soft);
+		.float-toolbar {
+			right: 0.6rem;
+			flex-wrap: wrap;
+			justify-content: flex-end;
 		}
 
-		.theory {
-			order: 3;
-			border-right: 0;
-			border-top: 1px solid var(--line-soft);
+		.kb-hint {
+			display: none;
 		}
 	}
 </style>

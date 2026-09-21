@@ -2,13 +2,18 @@
  * The code panel's text: what the pose on screen looks like in each engine.
  *
  * Pure: takes the tool's state, returns a string. Every number that comes from
- * the state is wrapped in ⟦ ⟧ so the panel can highlight it as live; `plain()`
- * strips them for copying. Nothing here is translated - code samples, and the
- * comments inside them, stay in English (CLAUDE.md, i18n).
+ * the state is wrapped in ⟦ ⟧ so the panel can mark it; a number the learner
+ * can DRAG carries an id, ⟦id|value⟧, which scrub.js maps back to the state.
+ * Numbers inside comments are text: the panel renders them as comment, never
+ * as code. `plain()` strips the markers for copying. Nothing here is
+ * translated - code samples, and the comments inside them, stay in English
+ * (CLAUDE.md, i18n).
  *
  * Every sign below is derived by `rotation.js` and checked in
  * `rotation.selftest.js` against each engine's own formula. Do not "tidy" a
- * minus sign here without running that check.
+ * minus sign here without running that check. Every engine BEHAVIOUR claimed
+ * in a comment was checked against the vendor's documentation or source on
+ * 2026-09-21; see the tool's CHANGELOG.md for which.
  */
 
 import {
@@ -36,18 +41,24 @@ export function num(value, digits = 1) {
 	return (r === 0 ? 0 : r).toFixed(digits);
 }
 
-const live = (text) => `⟦${text}⟧`;
-const g = (v, d = 1) => live(num(v, d));
-const f = (v, d = 1) => `${live(num(v, d))}f`;
-const gv = (v, d = 2) => v.map((c) => g(c, d)).join(", ");
-const fv = (v, d = 2) => v.map((c) => f(c, d)).join(", ");
+// ⟦value⟧ is live; ⟦id|value⟧ is live and draggable.
+const mark = (value, id) => (id ? `⟦${id}|${value}⟧` : `⟦${value}⟧`);
+const g = (v, d = 1, id) => mark(num(v, d), id);
+const f = (v, d = 1, id) => `${mark(num(v, d), id)}f`;
+const gv = (v, d = 2, prefix) =>
+	v.map((c, i) => g(c, d, prefix && `${prefix}${i}`)).join(", ");
+const fv = (v, d = 2, prefix) =>
+	v.map((c, i) => f(c, d, prefix && `${prefix}${i}`)).join(", ");
 const tuple = (v, d = 2) => `(${v.map((c) => g(c, d)).join(", ")})`;
 
-export const plain = (text) => text.replaceAll("⟦", "").replaceAll("⟧", "");
+/** Every marker, with its optional id: [whole, id, value]. */
+export const MARKER = /⟦(?:([a-z0-9]+)[|])?([^⟧]*)⟧/g;
+
+export const plain = (text) => text.replace(MARKER, (_, _id, value) => value);
 
 function pose({ yaw, pitch, roll }) {
 	const w = (v, pos, negative) =>
-		`${v >= 0 ? pos : negative} ${live(num(Math.abs(v)))}°`;
+		`${v >= 0 ? pos : negative} ${num(Math.abs(v))}°`;
 	return `${w(pitch, "nose up", "nose down")}, ${w(yaw, "turn right", "turn left")}, ${w(roll, "bank right", "bank left")}`;
 }
 
@@ -69,7 +80,7 @@ function euler(s) {
 			`# Pose: ${pose(s.euler)}`,
 			"# Typed as x = pitch, y = -yaw (+y turns LEFT), z = -roll (+z banks LEFT)",
 			warn && `# ${warn}`,
-			`var angles := Vector3(${g(a)}, ${g(b)}, ${g(c)})  # x, y, z in degrees; set by your input code`,
+			`var angles := Vector3(${g(a, 1, "e0")}, ${g(b, 1, "e1")}, ${g(c, 1, "e2")})  # degrees; set by your input code`,
 			"",
 			"func _process(_delta: float) -> void:",
 			s.clamp
@@ -86,7 +97,7 @@ function euler(s) {
 			`// Pose: ${pose(s.euler)}`,
 			"// Typed as x = -pitch (+x pitches DOWN), y = yaw, z = -roll (+z banks LEFT)",
 			warn && `// ${warn}`,
-			`private float _x = ${f(a)}, _y = ${f(b)}, _z = ${f(c)};  // set by your input code`,
+			`private float _x = ${f(a, 1, "e0")}, _y = ${f(b, 1, "e1")}, _z = ${f(c, 1, "e2")};  // set by your input code`,
 			"",
 			"private void Update()",
 			"{",
@@ -104,7 +115,7 @@ function euler(s) {
 		`// Pose: ${pose(s.euler)}`,
 		"// Typed as Pitch = up, Yaw = right, Roll = bank right: named, not x/y/z",
 		warn && `// ${warn}`,
-		`FRotator Angles(${f(a)}, ${f(b)}, ${f(c)});  // set by your input code`,
+		`FRotator Angles(${f(a, 1, "e0")}, ${f(b, 1, "e1")}, ${f(c, 1, "e2")});  // set by your input code`,
 		"",
 		"void ARotationDemo::Tick(float DeltaSeconds)",
 		"{",
@@ -126,40 +137,40 @@ function longWay(s) {
 	const now = from + (to - from) * t;
 	if (s.engine === "godot") {
 		return [
-			`# ✗ Lerping the NUMBER: ${g(from, 0)} → ${g(to, 0)} sweeps 340°, the long way round`,
-			`rotation_degrees.y = lerpf(${g(from)}, ${g(to)}, t)  # t = ${g(t, 2)} → ${g(now)}`,
+			`# ✗ Lerping the NUMBER: ${num(from, 0)} → ${num(to, 0)} sweeps 340°, the long way round`,
+			`rotation_degrees.y = lerpf(${g(from)}, ${g(to)}, ${g(t, 2, "t")})  # now ${g(now)}`,
 			"",
 			"# ✓ Lerping the ORIENTATION: 20°, the short way",
 			`var from := Quaternion(Vector3.UP, deg_to_rad(${g(from)}))`,
 			`var to := Quaternion(Vector3.UP, deg_to_rad(${g(to)}))`,
-			"quaternion = from.slerp(to, t)",
+			`quaternion = from.slerp(to, ${g(t, 2, "t")})`,
 			"",
 			"# lerp_angle() also goes the short way, for one angle, in radians",
 		];
 	}
 	if (s.engine === "unity") {
 		return [
-			`// ✗ Lerping the NUMBER: ${g(from, 0)} → ${g(to, 0)} sweeps 340°, the long way round`,
-			`float y = Mathf.Lerp(${f(from)}, ${f(to)}, t);  // t = ${g(t, 2)} → ${g(now)}`,
+			`// ✗ Lerping the NUMBER: ${num(from, 0)} → ${num(to, 0)} sweeps 340°, the long way round`,
+			`float y = Mathf.Lerp(${f(from)}, ${f(to)}, ${f(t, 2, "t")});  // now ${g(now)}`,
 			"transform.rotation = Quaternion.Euler(0f, y, 0f);",
 			"",
 			"// ✓ Lerping the ORIENTATION: 20°, the short way",
 			`Quaternion from = Quaternion.Euler(0f, ${f(from)}, 0f);`,
 			`Quaternion to = Quaternion.Euler(0f, ${f(to)}, 0f);`,
-			"transform.rotation = Quaternion.Slerp(from, to, t);",
+			`transform.rotation = Quaternion.Slerp(from, to, ${f(t, 2, "t")});`,
 			"",
 			"// Mathf.LerpAngle() also goes the short way, for one angle",
 		];
 	}
 	return [
-		`// ✗ Lerping the NUMBER: ${g(from, 0)} → ${g(to, 0)} sweeps 340°, the long way round`,
-		`const float Yaw = FMath::Lerp(${f(from)}, ${f(to)}, T);  // T = ${g(t, 2)} → ${g(now)}`,
+		`// ✗ Lerping the NUMBER: ${num(from, 0)} → ${num(to, 0)} sweeps 340°, the long way round`,
+		`const float Yaw = FMath::Lerp(${f(from)}, ${f(to)}, ${f(t, 2, "t")});  // now ${g(now)}`,
 		"SetActorRotation(FRotator(0.f, Yaw, 0.f));",
 		"",
 		"// ✓ Lerping the ORIENTATION: 20°, the short way",
 		`const FQuat From = FRotator(0.f, ${f(from)}, 0.f).Quaternion();`,
 		`const FQuat To = FRotator(0.f, ${f(to)}, 0.f).Quaternion();`,
-		"SetActorRotation(FQuat::Slerp(From, To, T));",
+		`SetActorRotation(FQuat::Slerp(From, To, ${f(t, 2, "t")}));`,
 	];
 }
 
@@ -175,7 +186,7 @@ function quaternion(s) {
 	// taken from the caller's q: two sources of truth once printed a q that
 	// contradicted the line above it (MISTAKES.md, 2026-09-21).
 	const q = engineQuat(s.engine, fromAxisAngle(s.axis, s.angle * DEG));
-	const half = "w = cos(θ/2) and (x, y, z) = axis · sin(θ/2)";
+	const half = `w = cos(θ/2) and (x, y, z) = axis · sin(θ/2), with θ = ${num(s.angle)}°`;
 	// "Apply q gradually": the same q, reached a fraction s of the way from
 	// the identity - so the q line above it still describes the whole turn.
 	const apply = s.scenario === "apply";
@@ -183,37 +194,37 @@ function quaternion(s) {
 	if (s.engine === "godot") {
 		return [
 			"# Godot 4 · right-handed · Quaternion(x, y, z, w)",
-			`# ${half}, with θ = ${g(s.angle)}°`,
-			`var axis := Vector3(${gv(axis, 3)})  # must be normalised`,
-			`var q := Quaternion(axis, deg_to_rad(${g(angle)}))`,
+			`# ${half}`,
+			`var axis := Vector3(${gv(axis, 3, "ax")})  # must be normalised`,
+			`var q := Quaternion(axis, deg_to_rad(${g(angle, 1, "ang")}))`,
 			`# q == Quaternion(${gv(q, 3)})`,
 			apply
-				? `quaternion = Quaternion.IDENTITY.slerp(q, ${g(s.t, 2)})  # ${note}`
+				? `quaternion = Quaternion.IDENTITY.slerp(q, ${g(s.t, 2, "t")})  # ${note}`
 				: "quaternion = q",
 		];
 	}
 	if (s.engine === "unity") {
 		return [
 			"// Unity 6 · left-handed · Quaternion(x, y, z, w)",
-			`// ${half}, with θ = ${g(s.angle)}°`,
+			`// ${half}`,
 			"// Left-handed: the same turn about the same axis is a NEGATIVE angle here.",
-			`Vector3 axis = new Vector3(${fv(axis, 3)});`,
-			`Quaternion q = Quaternion.AngleAxis(${f(angle)}, axis);`,
+			`Vector3 axis = new Vector3(${fv(axis, 3, "ax")});`,
+			`Quaternion q = Quaternion.AngleAxis(${f(angle, 1, "ang")}, axis);`,
 			`// q == (${gv(q, 3)})`,
 			apply
-				? `transform.rotation = Quaternion.Slerp(Quaternion.identity, q, ${f(s.t, 2)});  // ${note}`
+				? `transform.rotation = Quaternion.Slerp(Quaternion.identity, q, ${f(s.t, 2, "t")});  // ${note}`
 				: "transform.rotation = q;",
 		];
 	}
 	return [
 		"// Unreal 5 · left-handed · X forward, Y right, Z up · FQuat(X, Y, Z, W)",
-		`// ${half}, with θ = ${g(s.angle)}°`,
+		`// ${half}`,
 		"// Left-handed: the same turn about the same axis is a NEGATIVE angle here.",
-		`const FVector Axis(${fv(axis, 3)});  // must be normalised`,
-		`const FQuat Q(Axis, FMath::DegreesToRadians(${f(angle)}));`,
+		`const FVector Axis(${fv(axis, 3, "ax")});  // must be normalised`,
+		`const FQuat Q(Axis, FMath::DegreesToRadians(${f(angle, 1, "ang")}));`,
 		`// Q == FQuat(${gv(q, 3)})`,
 		apply
-			? `SetActorRotation(FQuat::Slerp(FQuat::Identity, Q, ${f(s.t, 2)}));  // ${note}`
+			? `SetActorRotation(FQuat::Slerp(FQuat::Identity, Q, ${f(s.t, 2, "t")}));  // ${note}`
 			: "SetActorRotation(Q);",
 	];
 }
@@ -223,49 +234,52 @@ function slerpCode(s) {
 	const b = engineQuat(s.engine, s.slerpB);
 	const d = a.reduce((sum, c, i) => sum + c * b[i], 0);
 	const full = s.scenario === "fullpath";
+	const sign = d < 0 ? "  (negative: the short way is towards -b)" : "";
 	if (s.engine === "godot") {
 		return [
 			`var a := Quaternion(${gv(a, 3)})`,
 			`var b := Quaternion(${gv(b, 3)})`,
-			`# a.dot(b) = ${g(d, 2)}${d < 0 ? "  (negative: the short way is towards -b)" : ""}`,
+			`# a.dot(b) = ${g(d, 2)}${sign}`,
 			full
-				? `quaternion = a.slerpni(b, ${g(s.t, 2)})  # ✗ no shortest-path check: can go the long way`
-				: `quaternion = a.slerp(b, ${g(s.t, 2)})  # ✓ flips b when the dot is negative`,
+				? `quaternion = a.slerpni(b, ${g(s.t, 2, "t")})  # ✗ no shortest-path check: can go the long way`
+				: `quaternion = a.slerp(b, ${g(s.t, 2, "t")})  # ✓ flips b when the dot is negative`,
 		];
 	}
 	if (s.engine === "unity") {
 		return [
 			`Quaternion a = new Quaternion(${fv(a, 3)});`,
 			`Quaternion b = new Quaternion(${fv(b, 3)});`,
-			`// Quaternion.Dot(a, b) = ${g(d, 2)}${d < 0 ? "  (negative: the short way is towards -b)" : ""}`,
+			`// Quaternion.Dot(a, b) = ${g(d, 2)}${sign}`,
 			full
 				? "// ✗ A hand-written slerp that skips this line goes the long way round:"
-				: "// ✓ Quaternion.Slerp already does this check for you:",
-			`${full ? "// " : "// (inside Slerp) "}if (Quaternion.Dot(a, b) < 0f) b = new Quaternion(-b.x, -b.y, -b.z, -b.w);`,
+				: "// ✓ Quaternion.Slerp takes the short way; a hand-written one needs this line:",
+			"// if (Quaternion.Dot(a, b) < 0f) b = new Quaternion(-b.x, -b.y, -b.z, -b.w);",
 			full
-				? `transform.rotation = MySlerp(a, b, ${f(s.t, 2)});  // your own, without the check`
-				: `transform.rotation = Quaternion.Slerp(a, b, ${f(s.t, 2)});`,
+				? `transform.rotation = MySlerp(a, b, ${f(s.t, 2, "t")});  // your own, without the check`
+				: `transform.rotation = Quaternion.Slerp(a, b, ${f(s.t, 2, "t")});`,
 		];
 	}
 	return [
 		`const FQuat A(${fv(a, 3)});`,
 		`const FQuat B(${fv(b, 3)});`,
-		`// A | B = ${g(d, 2)}${d < 0 ? "  (negative: the short way is towards -B)" : ""}`,
+		`// A | B = ${g(d, 2)}${sign.replace("-b", "-B")}`,
 		full
-			? `SetActorRotation(FQuat::SlerpFullPath(A, B, ${f(s.t, 2)}));  // ✗ follows the numbers the long way`
-			: `SetActorRotation(FQuat::Slerp(A, B, ${f(s.t, 2)}));  // ✓ takes the shortest path`,
+			? `SetActorRotation(FQuat::SlerpFullPath(A, B, ${f(s.t, 2, "t")}));  // ✗ no shortest-distance check`
+			: `SetActorRotation(FQuat::Slerp(A, B, ${f(s.t, 2, "t")}));  // ✓ corrects the alignment first`,
 	];
 }
 
 function unnormalised(s) {
 	const q = engineQuat(s.engine, s.q);
 	const n = length4(q);
-	const note = `length ${g(n, 2)}: not a rotation. Applied as q·v·q*, it scales by |q|² = ${g(n * n, 2)}`;
+	const scale = `length ${num(n, 2)}: not a rotation. The raw maths (q·v·q*) also scales by |q|² = ${num(n * n, 2)}`;
 	if (s.engine === "godot") {
 		return [
 			"# Components typed or accumulated by hand drift away from length 1.",
 			`var q := Quaternion(${gv(q, 3)})`,
-			`# ✗ ${note}`,
+			`# ✗ ${scale}.`,
+			"#   Basis(q) quietly divides it out, but in a debug build q * v and slerp()",
+			'#   report "must be normalized", and q * v hands the vector back unturned.',
 			"quaternion = q.normalized()  # ✓ length 1: a pure rotation",
 		];
 	}
@@ -273,14 +287,14 @@ function unnormalised(s) {
 		return [
 			"// Components typed or accumulated by hand drift away from length 1.",
 			`Quaternion q = new Quaternion(${fv(q, 3)});`,
-			`// ✗ ${note}`,
+			`// ✗ ${scale}`,
 			"transform.rotation = q.normalized;  // ✓ length 1: a pure rotation",
 		];
 	}
 	return [
 		"// Components typed or accumulated by hand drift away from length 1.",
 		`FQuat Q(${fv(q, 3)});`,
-		`// ✗ ${note}`,
+		`// ✗ ${scale}`,
 		"Q.Normalize();  // ✓ length 1: a pure rotation",
 		"SetActorRotation(Q);",
 	];
@@ -301,16 +315,16 @@ function negated(s) {
 			"// q and -q are the SAME orientation: every number flips, the object does not.",
 			`Quaternion q = new Quaternion(${fv(q, 3)});`,
 			"Quaternion minusQ = new Quaternion(-q.x, -q.y, -q.z, -q.w);",
-			"Debug.Log(Quaternion.Angle(q, minusQ));  // 0: same orientation",
-			"Debug.Log(q == minusQ);                  // False: == compares Dot with +1",
+			"Debug.Log(Quaternion.Angle(q, minusQ));  // 0: Angle uses |dot|",
+			"Debug.Log(q == minusQ);                  // False: == wants dot close to +1",
 		];
 	}
 	return [
 		"// Q and -Q are the SAME orientation: every number flips, the object does not.",
 		`const FQuat Q(${fv(q, 3)});`,
 		"const FQuat MinusQ = Q * -1.f;",
-		"const double Apart = Q.AngularDistance(MinusQ);  // 0: same orientation",
-		"const bool bSameNumbers = (Q == MinusQ);          // false",
+		"const double Apart = 2.0 * FMath::Acos(FMath::Abs(Q | MinusQ));  // 0: |dot| is 1",
+		"const bool bSameNumbers = (Q == MinusQ);                          // false: exact compare",
 	];
 }
 
@@ -333,7 +347,7 @@ export const TURN = {
 function turnWords({ kind, deg }) {
 	const pos = { pitch: "pitch up", yaw: "turn right", roll: "bank right" };
 	const negative = { pitch: "pitch down", yaw: "turn left", roll: "bank left" };
-	return `${deg >= 0 ? pos[kind] : negative[kind]} ${live(num(Math.abs(deg)))}°`;
+	return `${deg >= 0 ? pos[kind] : negative[kind]} ${num(Math.abs(deg))}°`;
 }
 
 function basis(s) {
@@ -359,7 +373,7 @@ function basis(s) {
 			`var forward := -transform.basis.z  # ${tuple(forward)}  note the minus`,
 			"",
 			`# Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-			`${local ? "rotate_object_local" : "global_rotate"}(${axis}, deg_to_rad(${g(sign * turn.deg)}))`,
+			`${local ? "rotate_object_local" : "global_rotate"}(${axis}, deg_to_rad(${g(sign * turn.deg, 1, "turn")}))`,
 		];
 	}
 	if (s.engine === "unity") {
@@ -372,14 +386,13 @@ function basis(s) {
 			`Vector3 forward = transform.forward;  // ${tuple(forward)}`,
 			"",
 			`// Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-			`transform.Rotate(${axis}, ${f(sign * turn.deg)}, Space.${local ? "Self" : "World"});`,
+			`transform.Rotate(${axis}, ${f(sign * turn.deg, 1, "turn")}, Space.${local ? "Self" : "World"});`,
 		];
 	}
-	const r = {
-		pitch: [turn.deg, 0, 0],
-		yaw: [0, turn.deg, 0],
-		roll: [0, 0, turn.deg],
-	}[turn.kind];
+	const slot = { pitch: 0, yaw: 1, roll: 2 }[turn.kind];
+	const r = [0, 1, 2].map((i) =>
+		f(i === slot ? turn.deg : 0, 1, i === slot ? "turn" : undefined),
+	);
 	return [
 		"// Unreal 5 · left-handed · Z up · forward is +X",
 		"// The Actor's own axes: the axes of its rotation matrix",
@@ -388,13 +401,13 @@ function basis(s) {
 		`const FVector Up = GetActorUpVector();            // ${tuple(up)}`,
 		"",
 		`// Last turn: ${turnWords(turn)} about ${where} ${axisName} axis`,
-		`${local ? "AddActorLocalRotation" : "AddActorWorldRotation"}(FRotator(${fv(r, 1)}));`,
+		`${local ? "AddActorLocalRotation" : "AddActorWorldRotation"}(FRotator(${r.join(", ")}));`,
 	];
 }
 
 function drift(s) {
 	const { lengths, angles } = basisHealth(s.cols);
-	const now = `lengths ${lengths.map((v) => g(v, 3)).join(" ")} · corners ${angles.map((v) => `${g(v, 1)}°`).join(" ")}`;
+	const now = `lengths ${lengths.map((v) => num(v, 3)).join(" ")} · corners ${angles.map((v) => `${num(v, 1)}°`).join(" ")}`;
 	const fix = s.orthonormalize;
 	if (s.engine === "godot") {
 		return [
@@ -478,21 +491,21 @@ function lookAt(s) {
 	const up = upHintAngle(s.target);
 	const overhead =
 		s.scenario === "overhead" || up < 2
-			? `target is ${g(up, 1)}° from straight up`
+			? `target is ${num(up, 1)}° from straight up`
 			: null;
 	const k = s.turnRate;
 
 	if (s.engine === "godot") {
 		return [
 			"# Build the orientation from a direction, not from angles (metres)",
-			`var target := Vector3(${gv(target)})`,
+			`var target := Vector3(${gv(target, 2, "tg")})`,
 			overhead &&
-				`# ✗ ${overhead}: direction ∥ Vector3.UP makes look_at() fail with an error`,
+				`# ✗ ${overhead}. Parallel to Vector3.UP, look_at() prints a warning and picks an arbitrary roll`,
 			s.smooth
 				? "var wanted := transform.looking_at(target, Vector3.UP).basis"
 				: "look_at(target, Vector3.UP)  # forward (-Z) now points at the target",
 			s.smooth &&
-				`transform.basis = transform.basis.slerp(wanted, ${g(k)} * delta).orthonormalized()`,
+				`transform.basis = transform.basis.slerp(wanted, ${g(k, 1, "rate")} * delta).orthonormalized()`,
 			overhead &&
 				"# ✓ keep the target below ~89°, or pass a different up hint near the pole",
 		];
@@ -500,27 +513,30 @@ function lookAt(s) {
 	if (s.engine === "unity") {
 		return [
 			"// Build the orientation from a direction, not from angles (metres)",
-			`Vector3 target = new Vector3(${fv(target)});`,
+			`Vector3 target = new Vector3(${fv(target, 2, "tg")});`,
 			"Vector3 toTarget = target - transform.position;",
 			overhead &&
-				`// ✗ ${overhead}: toTarget ∥ Vector3.up leaves the roll undefined, so it flips`,
+				`// ✗ ${overhead}. Exactly parallel, LookRotation falls back to FromToRotation(+Z, toTarget);`,
+			overhead && "//   passing over the top, the result swings round 180°",
 			s.smooth
 				? "Quaternion wanted = Quaternion.LookRotation(toTarget, Vector3.up);"
 				: "transform.rotation = Quaternion.LookRotation(toTarget, Vector3.up);",
 			s.smooth &&
-				`transform.rotation = Quaternion.Slerp(transform.rotation, wanted, ${f(k)} * Time.deltaTime);`,
+				`transform.rotation = Quaternion.Slerp(transform.rotation, wanted, ${f(k, 1, "rate")} * Time.deltaTime);`,
 			overhead &&
 				"// ✓ keep the target below ~89°, or pass a different up hint near the pole",
 		];
 	}
 	return [
 		"// Build the orientation from a direction, not from angles (centimetres)",
-		`const FVector Target(${fv(target, 1)});  // X forward, Y right, Z up`,
+		`const FVector Target(${fv(target, 1, "tg")});  // X forward, Y right, Z up`,
 		"const FRotator Look = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), Target);",
 		overhead &&
-			`// ✗ ${overhead}: straight up the yaw is undefined, so it flips 180° as the target passes over`,
+			`// ✗ ${overhead}. FindLookAtRotation builds from X alone (MakeFromX), which swaps`,
+		overhead &&
+			"//   its reference up axis near vertical: the yaw jumps as the target passes over",
 		s.smooth
-			? `SetActorRotation(FMath::RInterpTo(GetActorRotation(), Look, DeltaSeconds, ${f(k)}));`
+			? `SetActorRotation(FMath::RInterpTo(GetActorRotation(), Look, DeltaSeconds, ${f(k, 1, "rate")}));`
 			: "SetActorRotation(Look);",
 		overhead && "// ✓ keep the target below ~89° of pitch near the pole",
 	];
