@@ -3,6 +3,30 @@
 Reverse-chronological, newest first. Each heading is the release instant; the version in
 `package.json` is the same instant written `YYYY.M.D-HHMM`.
 
+## 2026-09-21 - 23:22
+
+Fixes from the maintainer's testing.
+
+### Fixed
+
+- **The page had a second, empty vertical scroll** of 930 to 1,880 px, varying with the method.
+  Screen-reader-only text is absolutely positioned, and the rails clip with `overflow` without
+  being positioned themselves, so that text escaped the clip at its natural place far down the
+  rail and stretched the document. `.sidebar-inner` is now `position: relative`; the page scroll is
+  0 for every method at two window heights.
+- **Low contrast in the light theme, which was really white lines.** The restyle renamed the
+  `--muted` token and the 3D views still read the old name, got an empty string, and kept
+  three.js's default white for the 4D sphere, the origin, the angle ticks, the reference circles,
+  and the quaternion's axis and θ ring. The views now read the right token, and
+  `readColours` reports any token that comes back empty as an error (tested both ways).
+- **The 4D sphere** is now a solid lattice of meridians and parallels in a colour that clears 3:1
+  on the view background in both themes, over a faint fill. It was a 28%-opacity wireframe.
+
+### Changed
+
+- **One footer.** It sits in the control rail, and moves to the textbook rail only while the
+  control rail is folded away, so the attribution and version never disappear with one rail.
+
 ## 2026-09-21 - 18:49
 
 Review round: the house look, direct manipulation everywhere, a manual, and every engine

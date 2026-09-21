@@ -136,13 +136,28 @@ onMount(() => {
 		return lines;
 	};
 
+	// The unit sphere (w = 0): solid lattice lines in a colour that clears 3:1
+	// on the view background in both themes, over a faint fill for depth. It
+	// was a 28%-opacity wireframe, which blended below 3:1 in the light theme.
 	const sphere = new Mesh(
-		new SphereGeometry(1, 24, 16),
-		new MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.28 }),
+		new SphereGeometry(1, 32, 24),
+		new MeshBasicMaterial({ transparent: true, opacity: 0.07, depthWrite: false }),
 	);
+	const lattice = track(makeLines(1.4));
+	const circle = (at) => Array.from({ length: 97 }, (_, i) => at((i / 96) * 2 * Math.PI));
+	const meridians = [0, 1, 2, 3, 4, 5].map((m) => {
+		const phi = (m / 6) * Math.PI;
+		return circle((s) => [Math.sin(s) * Math.cos(phi), Math.cos(s), Math.sin(s) * Math.sin(phi)]);
+	});
+	const parallels = [-60, -30, 0, 30, 60].map((lat) => {
+		const y = Math.sin(lat * DEG);
+		const r = Math.cos(lat * DEG);
+		return circle((s) => [r * Math.cos(s), y, r * Math.sin(s)]);
+	});
+	setPolylines(lattice, [...meridians, ...parallels]);
 	const sphereLabel = makeLabel("quiet");
 	sphereLabel.position.set(0.1, 1.12, 0);
-	scene.add(sphere, sphereLabel);
+	scene.add(sphere, lattice, sphereLabel);
 
 	const axes = AXES.map((axis) => {
 		const arrow = makeArrow(0.012);
@@ -198,6 +213,7 @@ onMount(() => {
 		colours = readColours(host);
 		scene.background = new Color(colours.view);
 		sphere.material.color.set(colours.muted);
+		lattice.material.color.set(colours.lattice);
 		origin.material.color.set(colours.muted);
 		qDot.material.color.set(colours.nose);
 		qPick.material.color.set(colours.nose);

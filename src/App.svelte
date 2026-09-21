@@ -749,6 +749,16 @@ onMount(() => {
 });
 </script>
 
+<!-- One footer, not two: it lives in the control rail, and moves to the
+     textbook rail only while the control rail is folded away. -->
+{#snippet footer()}
+	<div class="app-footer">
+		{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
+		<br />
+		<span class="badge" title={t("versionTitle")}>v{version}</span>
+	</div>
+{/snippet}
+
 <a class="skip-link" href="#main">{t("skipToContent")}</a>
 
 <div class="app-layout">
@@ -757,9 +767,7 @@ onMount(() => {
 			<div class="sidebar-inner">
 				<Theory {method} {engine} onglossary={openGlossary} />
 			</div>
-			<div class="app-footer">
-				{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
-			</div>
+			{#if !rightOpen}{@render footer()}{/if}
 		</aside>
 	{/if}
 
@@ -918,11 +926,7 @@ onMount(() => {
 					onglossary={openGlossary}
 				/>
 			</div>
-			<div class="app-footer">
-				{t("footerMadeWith")} — {t("footerSubject")} — By E. Ketterer
-				<br />
-				<span class="badge" title={t("versionTitle")}>v{version}</span>
-			</div>
+			{@render footer()}
 		</aside>
 	{/if}
 </div>
@@ -1080,7 +1084,7 @@ onMount(() => {
 		min-width: 0;
 	}
 
-	.sidebar-right .app-footer .badge {
+	.app-footer .badge {
 		margin-top: 0.3rem;
 	}
 

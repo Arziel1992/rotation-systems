@@ -26,10 +26,28 @@ import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 
 const Y_AXIS = new Vector3(0, 1, 0);
 
-/** The palette, read from the CSS tokens so the views follow the theme. */
+/**
+ * The palette, read from the CSS tokens so the views follow the theme.
+ *
+ * A token read by name from JavaScript has no compiler behind it: when the
+ * restyle renamed --muted, this returned "" and three.js quietly kept its
+ * default WHITE for a dozen lines, invisible on the light theme (MISTAKES.md,
+ * 2026-09-21). So an empty token is reported as an error, not tolerated.
+ */
 export function readColours(element) {
 	const style = getComputedStyle(element);
 	const get = (name) => style.getPropertyValue(`--${name}`).trim();
+	const colours = readTokens(get);
+	const missing = Object.entries(colours).filter(([, value]) => !value);
+	if (missing.length) {
+		console.error(
+			`readColours: no CSS value for ${missing.map(([key]) => key).join(", ")}`,
+		);
+	}
+	return colours;
+}
+
+function readTokens(get) {
 	return {
 		view: get("view-bg"),
 		x: get("axis-x"),
@@ -43,7 +61,8 @@ export function readColours(element) {
 		ghost: get("ghost"),
 		good: get("good"),
 		bad: get("bad"),
-		muted: get("muted"),
+		muted: get("text-secondary"),
+		lattice: get("control-border"),
 	};
 }
 
